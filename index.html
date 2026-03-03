@@ -1,0 +1,1923 @@
+<!--
+  Derived from BlockPy (https://github.com/blockpy-edu/blockpy)
+  Original Copyright (c) blockpy-edu — Apache License 2.0
+  Modified by [Chao Chin Yang], 2025-2026:
+  - Replaced Skulpt with Pyodide runtime
+  - Added NumPy / scikit-learn blocks
+  - Added local bridge system (blockpy_bridge.py)
+-->
+
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BlockPy × Pyodide — Stage 5 Bridge</title>
+<script src="https://unpkg.com/blockly@10.4.3/blockly_compressed.js"></script>
+<script src="https://unpkg.com/blockly@10.4.3/blocks_compressed.js"></script>
+<script src="https://unpkg.com/blockly@10.4.3/python_compressed.js"></script>
+<script src="https://unpkg.com/blockly@10.4.3/msg/zh-hant.js"></script>
+<script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Sora:wght@300;500;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;--surface:#161b22;--border:#30363d;
+  --accent:#58a6ff;--green:#3fb950;--warn:#f0883e;
+  --danger:#ff7b72;--purple:#bc8cff;--orange:#f39c12;
+  --teal:#1abc9c;--text:#e6edf3;--muted:#8b949e;--r:8px;
+}
+body{font-family:'Sora',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+
+/* ── Header ── */
+header{display:flex;align-items:center;gap:7px;padding:6px 12px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:nowrap;}
+.logo{display:flex;align-items:center;gap:6px;font-weight:700;font-size:13px;white-space:nowrap;}
+.logo-icon{width:24px;height:24px;background:linear-gradient(135deg,var(--accent),var(--purple));border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;}
+.badge{font-size:9.5px;font-weight:600;padding:2px 6px;border-radius:20px;background:rgba(188,140,255,.15);color:var(--purple);border:1px solid rgba(188,140,255,.3);white-space:nowrap;}
+.spacer{flex:1;}
+
+/* lang switcher */
+.lang-switcher{display:flex;border:1px solid var(--border);border-radius:var(--r);overflow:hidden;flex-shrink:0;}
+.lang-btn{padding:3px 9px;border:none;background:transparent;color:var(--muted);font-family:'Sora',sans-serif;font-size:10.5px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap;}
+.lang-btn.active{background:linear-gradient(135deg,#c0392b,#922b21);color:#fff;font-weight:700;}
+.lang-btn.active.zh{background:linear-gradient(135deg,#2471a3,#1a5276);}
+.lang-btn.active.en{background:linear-gradient(135deg,#1e8449,#145a32);}
+.lang-btn:hover:not(.active){color:var(--text);background:rgba(255,255,255,.05);}
+
+/* engine pill */
+#engineStatus{display:flex;align-items:center;gap:4px;font-size:10.5px;color:var(--muted);padding:3px 8px;border-radius:20px;border:1px solid var(--border);background:var(--bg);transition:all .3s;white-space:nowrap;flex-shrink:0;}
+#engineStatus .dot{width:6px;height:6px;border-radius:50%;background:var(--warn);animation:pulse 1.5s infinite;flex-shrink:0;}
+#engineStatus.ready .dot{background:var(--green);animation:none;}
+#engineStatus.ready{color:var(--green);border-color:rgba(63,185,80,.35);}
+#engineStatus.loading-sklearn .dot{background:var(--orange);animation:pulse 1s infinite;}
+#engineStatus.loading-sklearn{color:var(--orange);}
+#engineStatus.error .dot{background:var(--danger);animation:none;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* mode toggle */
+.mode-toggle{display:flex;border:1px solid var(--border);border-radius:var(--r);overflow:hidden;flex-shrink:0;}
+.mode-toggle button{padding:3px 10px;border:none;background:transparent;color:var(--muted);font-family:'Sora',sans-serif;font-size:10.5px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap;}
+.mode-toggle button.active{background:var(--accent);color:#0d1117;font-weight:700;}
+
+/* toolbar */
+.toolbar{display:flex;gap:4px;flex-shrink:0;}
+.btn{display:flex;align-items:center;gap:4px;padding:3px 10px;border-radius:var(--r);border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:'Sora',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap;}
+.btn:hover{background:#21262d;border-color:var(--accent);color:var(--accent);}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#0d1117;font-weight:700;}
+.btn.primary:hover{background:#79c0ff;}
+.btn.primary:disabled{opacity:.45;cursor:not-allowed;}
+.btn.export-py:hover{border-color:var(--green);color:var(--green);}
+.btn.export-png:hover{border-color:var(--purple);color:var(--purple);}
+.btn.danger:hover{border-color:var(--danger);color:var(--danger);}
+
+/* ── Main ── */
+main{display:flex;flex:1;overflow:hidden;}
+
+/* 左欄：Blockly */
+#blocklyPane{flex:1;min-width:200px;display:flex;flex-direction:column;overflow:hidden;}
+#blocklyDiv{flex:1;display:block;}
+
+/* 中欄：Python 程式碼（永遠顯示） */
+#codePane{width:320px;min-width:160px;display:flex;flex-direction:column;border-left:1px solid var(--border);border-right:1px solid var(--border);overflow:hidden;flex-shrink:0;}
+#codeEditor{flex:1;background:#090d12;color:#a5d6ff;font-family:'JetBrains Mono',monospace;font-size:12.5px;border:none;outline:none;resize:none;padding:14px 16px;line-height:1.7;tab-size:4;}
+
+.pane-label{font-size:10px;font-weight:600;letter-spacing:.8px;color:var(--muted);padding:5px 12px;background:var(--surface);border-bottom:1px solid var(--border);text-transform:uppercase;flex-shrink:0;display:flex;align-items:center;gap:6px;}
+.dot2{width:5px;height:5px;border-radius:50%;flex-shrink:0;}
+
+/* 可拖曳分隔線（中欄右邊 / 右欄左邊） */
+.resizer{width:4px;cursor:col-resize;background:var(--border);flex-shrink:0;transition:background .15s;}
+.resizer:hover{background:var(--accent);}
+/* 向下相容舊 id */
+#resizer{width:4px;cursor:col-resize;background:var(--border);flex-shrink:0;transition:background .15s;}
+#resizer:hover{background:var(--accent);}
+
+#rightPane{width:400px;min-width:260px;display:flex;flex-direction:column;flex-shrink:0;}
+
+/* tabs */
+.tab-bar{display:flex;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;}
+.tab-btn{flex:1;padding:6px 3px;border:none;background:transparent;color:var(--muted);font-family:'Sora',sans-serif;font-size:10.5px;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:3px;}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent);}
+.tab-btn:hover:not(.active){color:var(--text);}
+
+#outputTab,#canvasTab,#varTab,#galleryTab{flex:1;display:none;flex-direction:column;overflow:hidden;}
+#outputTab.active,#canvasTab.active,#varTab.active,#galleryTab.active{display:flex;}
+
+/* output */
+#outputBox{flex:1;background:#090d12;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#e6edf3;padding:10px 12px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;line-height:1.7;}
+.line-out{color:#e6edf3;display:block;}.line-err{color:var(--danger);display:block;}.line-info{color:var(--accent);font-style:italic;display:block;}.line-ok{color:var(--green);display:block;}.line-warn{color:var(--warn);display:block;}
+
+/* canvas */
+#canvasTab{background:#090d12;align-items:center;justify-content:center;padding:8px;gap:6px;}
+.canvas-toolbar{display:flex;gap:5px;align-items:center;width:100%;flex-shrink:0;}
+.canvas-toolbar label{font-size:11px;color:var(--muted);}
+#drawCanvas{background:#fff;border-radius:6px;border:2px solid var(--border);max-width:100%;max-height:calc(100% - 36px);cursor:crosshair;display:block;}
+
+/* variables */
+#varBox{flex:1;overflow-y:auto;padding:10px 12px;background:#090d12;}
+.var-row{display:flex;gap:7px;align-items:flex-start;font-family:'JetBrains Mono',monospace;font-size:11px;padding:3px 0;border-bottom:1px solid rgba(48,54,61,.5);}
+.var-name{color:var(--accent);min-width:75px;font-weight:600;}.var-type{color:var(--muted);font-size:10px;padding-top:1px;min-width:48px;}.var-val{color:#e6edf3;word-break:break-all;}
+
+/* ── Gallery ── */
+#galleryTab{overflow-y:auto;background:#090d12;padding:10px;}
+.gallery-section{margin-bottom:14px;}
+.gallery-section h3{font-size:10.5px;font-weight:600;letter-spacing:.7px;color:var(--muted);text-transform:uppercase;margin-bottom:7px;padding:0 2px;}
+.gallery-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;}
+.gallery-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:10px 11px;cursor:pointer;transition:all .2s;position:relative;overflow:hidden;}
+.gallery-card::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,transparent 60%,rgba(255,255,255,.02));pointer-events:none;}
+.gallery-card:hover{border-color:var(--accent);background:#1c2128;transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.3);}
+.gallery-card:active{transform:translateY(0);}
+.gallery-card .card-icon{font-size:22px;margin-bottom:5px;display:block;}
+.gallery-card .card-title{font-size:11.5px;font-weight:600;color:var(--text);margin-bottom:3px;}
+.gallery-card .card-desc{font-size:10.5px;color:var(--muted);line-height:1.45;}
+.gallery-card .card-tag{display:inline-block;font-size:9.5px;font-weight:600;padding:1px 5px;border-radius:20px;margin-top:5px;}
+.tag-draw{background:rgba(155,89,182,.2);color:var(--purple);border:1px solid rgba(155,89,182,.3);}
+.tag-numpy{background:rgba(52,152,219,.2);color:#5dade2;border:1px solid rgba(52,152,219,.3);}
+.tag-sklearn{background:rgba(26,188,156,.2);color:var(--teal);border:1px solid rgba(26,188,156,.3);}
+.gallery-card .card-mode{position:absolute;top:7px;right:7px;font-size:9px;color:var(--muted);background:rgba(255,255,255,.06);padding:1px 5px;border-radius:10px;}
+
+/* loading overlay */
+#langOverlay{display:none;position:fixed;inset:0;background:rgba(13,17,23,.7);backdrop-filter:blur(4px);z-index:999;align-items:center;justify-content:center;font-size:14px;color:var(--accent);}
+#langOverlay.visible{display:flex;}
+
+
+/* ── Bridge status pill ── */
+#bridgeStatus{
+  display:flex;align-items:center;gap:5px;font-size:10px;
+  color:var(--muted);padding:3px 9px;border-radius:20px;
+  border:1px solid var(--border);background:var(--bg);
+  transition:all .3s;white-space:nowrap;flex-shrink:0;
+  cursor:pointer;position:relative;
+}
+#bridgeStatus .bdot{width:6px;height:6px;border-radius:50%;background:var(--muted);flex-shrink:0;}
+#bridgeStatus.bs-ok  .bdot{background:var(--green);}
+#bridgeStatus.bs-ok {color:var(--green);border-color:rgba(63,185,80,.35);}
+#bridgeStatus.bs-off .bdot{background:var(--warn);}
+#bridgeStatus.bs-off{color:var(--warn);border-color:rgba(240,136,62,.4);}
+/* URL popup */
+#bPopup{
+  display:none;position:absolute;top:115%;right:0;z-index:200;
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:8px;padding:11px 14px;min-width:280px;
+  box-shadow:0 6px 24px rgba(0,0,0,.5);
+}
+#bPopup.open{display:block;}
+#bPopup label{font-size:10px;color:var(--muted);display:block;margin-bottom:5px;}
+#bPopup input{
+  width:100%;background:#090d12;border:1px solid var(--border);
+  border-radius:5px;padding:5px 8px;color:var(--text);
+  font-family:'JetBrains Mono',monospace;font-size:11px;outline:none;
+}
+#bPopup input:focus{border-color:var(--accent);}
+#bPopup .bstats{
+  margin-top:9px;font-size:10px;color:var(--muted);
+  font-family:'JetBrains Mono',monospace;line-height:1.75;
+}
+/* Bridge tab panel */
+#bridgeTab{flex:1;display:none;flex-direction:column;overflow:hidden;background:#090d12;}
+#bridgeTab.active{display:flex;}
+#bridgeLog{
+  flex:1;font-family:'JetBrains Mono',monospace;font-size:11px;
+  padding:10px 12px;overflow-y:auto;white-space:pre-wrap;
+  word-break:break-all;line-height:1.7;
+}
+.bl-send{color:#f0883e;display:block;}
+.bl-recv{color:#3fb950;display:block;}
+.bl-info{color:var(--accent);font-style:italic;display:block;}
+.bl-err {color:var(--danger);display:block;}
+/* Bridge colour tag */
+.tag-bridge{background:rgba(243,156,18,.15);color:#f39c12;border:1px solid rgba(243,156,18,.3);}
+
+::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
+</style>
+</head>
+<body>
+
+<!-- file:// warning banner -->
+<div id="fileBanner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:998;
+  background:linear-gradient(135deg,#78350f,#92400e);
+  border-top:2px solid #f59e0b;
+  padding:8px 16px;font-size:11px;color:#fef3c7;
+  display:flex;align-items:center;gap:12px;">
+  <span>⚠️ 從檔案直接開啟</span>
+  <span style="opacity:.75">橋接功能建議從橋接器開啟：先啟動 blockpy_bridge.py，再點「🌐 開啟工具」</span>
+  <button onclick="document.getElementById('fileBanner').style.display='none'"
+    style="margin-left:auto;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.4);
+    border-radius:5px;padding:2px 8px;color:#fef3c7;cursor:pointer;font-size:11px;">✕ 知道了</button>
+</div>
+<script>
+  if (location.protocol === 'file:') {
+    document.getElementById('fileBanner').style.display = 'flex';
+  }
+</script>
+
+<div id="langOverlay"><span>🌐 <span id="langOverlayText">切換語系中…</span></span></div>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">⬡</div>
+    BlockPy <span style="opacity:.4;font-weight:300;margin:0 2px">×</span> Pyodide
+  </div>
+  <span class="badge">Stage 5 · Bridge</span>
+
+  <div class="lang-switcher">
+    <button class="lang-btn zh active" id="langBtnZh" onclick="switchLang('zh')">🇹🇼 中文</button>
+    <button class="lang-btn vi"        id="langBtnVi" onclick="switchLang('vi')">🇻🇳 Tiếng Việt</button>
+    <button class="lang-btn en"        id="langBtnEn" onclick="switchLang('en')">🇬🇧 English</button>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div id="bridgeStatus" class="bs-off" onclick="toggleBPopup()">
+    <div class="bdot"></div>
+    <span id="bLabel">🔌 橋接 ─</span>
+    <div id="bPopup">
+      <label>Bridge Server URL</label>
+      <input id="bUrlInput" value="http://127.0.0.1:8765"
+             onchange="setBridgeUrl(this.value)"
+             onclick="event.stopPropagation()">
+      <div class="bstats" id="bStats">等待連線...</div>
+      <button onclick="checkBridgeStatus();event.stopPropagation();" style="margin-top:8px;width:100%;padding:4px;background:#21262d;border:1px solid #30363d;border-radius:5px;color:#e6edf3;font-size:10px;cursor:pointer;">🔄 重新連線</button>
+    </div>
+  </div>
+    <div id="engineStatus"><div class="dot"></div><span id="engineLabel">…</span></div>
+
+  <div class="toolbar">
+    <button class="btn export-py"  onclick="exportPy()"  title="下載 .py"><span data-i18n="btnExportPy"></span></button>
+    <button class="btn export-png" onclick="exportPng()" title="下載 PNG"><span data-i18n="btnExportPng"></span></button>
+    <button class="btn danger"     onclick="clearOutput()">✕ <span data-i18n="btnClearOutput"></span></button>
+    <button class="btn primary" id="runBtn" onclick="runCode()" disabled>▶ <span data-i18n="btnRun"></span></button>
+  </div>
+</header>
+
+<main>
+  <!-- 左欄：Blockly 積木 -->
+  <div id="blocklyPane">
+    <div class="pane-label">
+      <span class="dot2" style="background:var(--accent)"></span>
+      <span data-i18n="modeBlock">⬡ 積木編輯器</span>
+    </div>
+    <div id="blocklyDiv"></div>
+  </div>
+
+  <!-- 可拖曳分隔線 A（Blockly ↔ Python） -->
+  <div class="resizer" id="resizerA"></div>
+
+  <!-- 中欄：Python 程式碼（永遠可見，與積木同步） -->
+  <div id="codePane">
+    <div class="pane-label" style="justify-content:space-between;">
+      <span style="display:flex;align-items:center;gap:6px;">
+        <span class="dot2" style="background:var(--green)"></span>
+        <span>{ } Python</span>
+      </span>
+      <span id="codeEditHint" style="font-size:9px;color:var(--warn);display:none;">✏️ 手動編輯中</span>
+    </div>
+    <textarea id="codeEditor" spellcheck="false"></textarea>
+  </div>
+
+  <!-- 可拖曳分隔線 B（Python ↔ 右欄） -->
+  <div class="resizer" id="resizer"></div>
+
+  <div id="rightPane">
+    <div class="tab-bar">
+      <button class="tab-btn active" id="tab-output"  onclick="switchTab('output')">📋 <span data-i18n="tabOutput"></span></button>
+      <button class="tab-btn"        id="tab-canvas"  onclick="switchTab('canvas')">🎨 <span data-i18n="tabCanvas"></span></button>
+      <button class="tab-btn"        id="tab-gallery" onclick="switchTab('gallery')">📚 <span data-i18n="tabGallery"></span></button>
+      <button class="tab-btn"        id="tab-var"     onclick="switchTab('var')">📊 <span data-i18n="tabVar"></span></button>
+      <button class="tab-btn"        id="tab-bridge"  onclick="switchTab('bridge')">🔌 <span data-i18n="tabBridge"></span></button>
+    </div>
+
+    <!-- Output -->
+    <div id="outputTab" class="active">
+      <div id="outputBox"><span class="line-info">Pyodide init…</span>
+</div>
+    </div>
+
+    <!-- Canvas -->
+    <div id="canvasTab">
+      <div class="canvas-toolbar">
+        <label data-i18n="canvasSize"></label>
+        <select id="canvasSizeSelect" onchange="resizeCanvas()" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:2px 6px;font-size:11px;">
+          <option value="360,270">360×270</option>
+          <option value="480,360" selected>480×360</option>
+          <option value="600,450">600×450</option>
+        </select>
+        <span id="canvasSizeLabel" style="font-size:11px;color:var(--muted);margin-left:auto;">480×360</span>
+      </div>
+      <canvas id="drawCanvas" width="480" height="360"></canvas>
+    </div>
+
+    <!-- Gallery -->
+    <div id="galleryTab">
+      <div id="galleryContent"></div>
+    </div>
+
+    <!-- Bridge Log -->
+    <div id="bridgeTab">
+      <div id="bridgeLog"><span class="bl-info">等待橋接器連線…
+請先執行 blockpy_bridge.py 並啟動橋接器
+
+然後在工具箱 🔌 橋接 分類找到積木
+</span></div>
+    </div>
+
+    <!-- Variables -->
+    <div id="varTab">
+      <div id="varBox">
+        <div id="varContent" style="color:var(--muted);font-size:12px;padding:8px 0;" data-i18n-content="varEmpty"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════
+//  S0 ── TRANSLATIONS  (zh / vi / en)
+// ═══════════════════════════════════════════════════════════════════════
+const LANG_TABLE = {
+zh:{
+  modeBlock:'積木', btnRun:'執行', btnClearOutput:'清除', btnExportPy:'⬇ .py', btnExportPng:'⬇ PNG',
+  tabOutput:'輸出', tabCanvas:'畫布', tabGallery:'範例庫', tabVar:'變數',
+  canvasSize:'畫布：', varEmpty:'尚未執行', panelBlock:'積木編輯器', panelCode:'Python 程式碼',
+  engineLoading:'載入 Pyodide…', engineLoadingSklearn:'載入 scikit-learn…',
+  engineReady:'就緒 ✓', engineFail:'載入失敗',
+  codeEditorHint:'# Python 程式碼（Pyodide 執行）',
+  initMsg1:'⏳ 載入 Pyodide 0.25.1…', initMsg2:'📦 載入 numpy…',
+  initMsg3:'🤖 載入 scikit-learn（約 10–20 秒）…',
+  initOk:'✅ 全部就緒！numpy + scikit-learn 已載入。',
+  initHint1:'💡 Ctrl+Enter 執行', initHint2:'📚 點「範例庫」瀏覽範例程式碼',
+  runStart:'\n── 執行開始 ──', runDone:'── 完成 ──\n',
+  runWarn:'⚠️ 沒有可執行的程式碼', pyNotReady:'⚠️ 引擎未就緒',
+  noVar:'無使用者變數', langOverlay:'切換語系中…',
+  exportPyOk:'✅ .py 已下載', exportPngOk:'✅ PNG 已下載',
+  exportPngWarn:'⚠️ 請先在畫布分頁執行繪圖程式',
+  // toolbox
+  catDraw:'🎨 繪圖', catPrint:'🐍 輸出', catVar:'📦 變數', catMath:'🔢 數學',
+  catLoop:'🔁 迴圈', catLogic:'🔀 邏輯', catFn:'⚙️ 函式', catNumpy:'🔬 NumPy',
+  catSklearn:'🤖 scikit-learn',
+  secCanvas:'── 畫布設定 ──', secPen:'── 畫筆設定 ──', secShape:'── 形狀 ──', secText:'── 文字 ──',
+  secSkData:'── 資料集 ──', secSkModel:'── 建立模型 ──', secSkTrain:'── 訓練與評估 ──',
+  // draw blocks
+  blkClear:'🗑️ 清除畫布', blkBg:'🖼️ 背景顏色', blkStroke:'✏️ 線條 顏色',
+  blkStrokeW:'寬度', blkFill:'🪣 填充顏色',
+  blkLine:'📏 畫線 從(', blkLineTo:') 到(', blkLineEnd:')',
+  blkRect:'▭ 矩形 左上(', blkRectW:') 寬', blkRectH:'高', blkRectFill:'填充',
+  blkCircle:'⭕ 圓 圓心(', blkCircleR:') 半徑', blkCircleFill:'填充',
+  blkEllipse:'🥚 橢圓 圓心(', blkEllipseRx:') X半徑', blkEllipseRy:'Y半徑', blkEllipseFill:'填充',
+  blkPoly:'⬡ 正多邊形 邊數', blkPolyCenter:'圓心(', blkPolyR:') 半徑', blkPolyFill:'填充',
+  blkDrawText:'🔤 文字', blkDrawTextAt:'位置(', blkDrawTextSize:') 字號', blkDrawTextColor:'顏色',
+  // sklearn blocks
+  skDataset:'📊 載入資料集', skDatasetVar:'存入', skSplit:'✂️ 分割訓練/測試集',
+  skSplitX:'資料X', skSplitY:'標籤y', skSplitRatio:'測試比例', skSplitSeed:'隨機種子',
+  skSplitTo:'→ X_train,X_test,y_train,y_test',
+  skModel:'🤖 建立模型', skModelVar:'存入', skModelKnn:'KNN 分類器', skModelLr:'線性迴歸',
+  skModelDt:'決策樹', skModelSvm:'SVM 分類器', skModelK:'K值',
+  skFit:'🏋️ 訓練', skFitModel:'模型', skFitX:'訓練X', skFitY:'訓練y',
+  skPredict:'🔮 預測', skPredictModel:'模型', skPredictX:'輸入X', skPredictTo:'→結果',
+  skScore:'📈 評估準確率', skScoreModel:'模型', skScoreX:'測試X', skScoreY:'測試y', skScorePrint:'並印出',
+  skReport:'📋 印出分類報告', skReportTrue:'真實y', skReportPred:'預測y',
+  // tooltips
+  tipClear:'清除整個畫布', tipBg:'填滿背景色', tipStroke:'設定線條顏色寬度', tipFill:'設定填充色',
+  tipLine:'畫一條直線', tipRect:'畫矩形', tipCircle:'畫圓形', tipEllipse:'畫橢圓',
+  tipPoly:'畫正多邊形', tipDrawText:'在畫布繪製文字',
+  tipSkDataset:'載入 sklearn 內建資料集', tipSkSplit:'分割訓練/測試資料',
+  tipSkModel:'建立 ML 模型', tipSkFit:'訓練模型', tipSkPredict:'預測新資料',
+  tipSkScore:'計算準確率', tipSkReport:'印出分類報告',
+  // gallery
+  galSecDraw:'🎨 繪圖範例', galSecNumpy:'🔬 NumPy 範例', galSecSklearn:'🤖 機器學習範例',
+  tabBridge:'橋接', catBridge:'🔌 橋接',
+  secBridgeConn:'── 連線設定 ──', secBridgeIO:'── 資料傳送 ──', secBridgeAdv:'── 進階 ──',
+  blkBridgeUrl:'🔌 設定橋接 URL',
+  blkBridgeSend:'📤 傳送至本地',
+  blkBridgeRecv:'📥 接收自本地 存入',
+  blkBridgeWait:'⏳ 等待接收自本地 存入', blkBridgeWaitSec:'秒',
+  blkBridgePoll:'📡 輪詢接收 間隔(秒)', blkBridgePollInto:'資料存入',
+  blkBridgePollDo:'每次執行', blkBridgePollAfter:'結束後執行',
+  galSecBridge:'🔌 橋接範例',
+},
+vi:{
+  modeBlock:'Khối', btnRun:'Chạy', btnClearOutput:'Xóa', btnExportPy:'⬇ .py', btnExportPng:'⬇ PNG',
+  tabOutput:'Kết quả', tabCanvas:'Khung vẽ', tabGallery:'Thư viện', tabVar:'Biến số',
+  canvasSize:'Khung:', varEmpty:'Chưa thực thi', panelBlock:'Trình soạn khối', panelCode:'Mã Python',
+  engineLoading:'Đang tải Pyodide…', engineLoadingSklearn:'Đang tải scikit-learn…',
+  engineReady:'Sẵn sàng ✓', engineFail:'Tải thất bại',
+  codeEditorHint:'# Mã Python (chạy bằng Pyodide)',
+  initMsg1:'⏳ Đang tải Pyodide 0.25.1…', initMsg2:'📦 Đang tải numpy…',
+  initMsg3:'🤖 Đang tải scikit-learn (khoảng 10–20 giây)…',
+  initOk:'✅ Sẵn sàng! numpy + scikit-learn đã tải.',
+  initHint1:'💡 Ctrl+Enter để chạy', initHint2:'📚 Xem "Thư viện" để dùng ví dụ',
+  runStart:'\n── Bắt đầu chạy ──', runDone:'── Hoàn thành ──\n',
+  runWarn:'⚠️ Không có mã để chạy', pyNotReady:'⚠️ Engine chưa sẵn sàng',
+  noVar:'Không có biến người dùng', langOverlay:'Đang chuyển ngôn ngữ…',
+  exportPyOk:'✅ Đã tải .py', exportPngOk:'✅ Đã tải PNG',
+  exportPngWarn:'⚠️ Hãy vẽ hình trong tab Khung vẽ trước',
+  catDraw:'🎨 Vẽ Hình', catPrint:'🐍 Xuất dữ liệu', catVar:'📦 Biến số', catMath:'🔢 Toán học',
+  catLoop:'🔁 Vòng lặp', catLogic:'🔀 Điều kiện', catFn:'⚙️ Hàm số', catNumpy:'🔬 NumPy',
+  catSklearn:'🤖 scikit-learn',
+  secCanvas:'── Thiết lập khung ──', secPen:'── Thiết lập nét vẽ ──', secShape:'── Hình dạng ──', secText:'── Văn bản ──',
+  secSkData:'── Bộ dữ liệu ──', secSkModel:'── Tạo mô hình ──', secSkTrain:'── Huấn luyện ──',
+  blkClear:'🗑️ Xóa khung', blkBg:'🖼️ Màu nền', blkStroke:'✏️ Nét vẽ Màu',
+  blkStrokeW:'Độ rộng', blkFill:'🪣 Màu tô',
+  blkLine:'📏 Vẽ đường Từ(', blkLineTo:') Đến(', blkLineEnd:')',
+  blkRect:'▭ Hình chữ nhật Góc(', blkRectW:') Rộng', blkRectH:'Cao', blkRectFill:'Tô màu',
+  blkCircle:'⭕ Hình tròn Tâm(', blkCircleR:') Bán kính', blkCircleFill:'Tô màu',
+  blkEllipse:'🥚 Hình elip Tâm(', blkEllipseRx:') Bán kính X', blkEllipseRy:'Bán kính Y', blkEllipseFill:'Tô màu',
+  blkPoly:'⬡ Đa giác đều Số cạnh', blkPolyCenter:'Tâm(', blkPolyR:') Bán kính', blkPolyFill:'Tô màu',
+  blkDrawText:'🔤 Văn bản', blkDrawTextAt:'Vị trí(', blkDrawTextSize:') Cỡ', blkDrawTextColor:'Màu',
+  skDataset:'📊 Tải bộ dữ liệu', skDatasetVar:'lưu vào', skSplit:'✂️ Chia tập train/test',
+  skSplitX:'Dữ liệu X', skSplitY:'Nhãn y', skSplitRatio:'Tỉ lệ test', skSplitSeed:'Hạt giống',
+  skSplitTo:'→ X_train,X_test,y_train,y_test',
+  skModel:'🤖 Tạo mô hình', skModelVar:'lưu vào', skModelKnn:'KNN phân loại', skModelLr:'Hồi quy tuyến tính',
+  skModelDt:'Cây quyết định', skModelSvm:'SVM phân loại', skModelK:'K',
+  skFit:'🏋️ Huấn luyện', skFitModel:'mô hình', skFitX:'X_train', skFitY:'y_train',
+  skPredict:'🔮 Dự đoán', skPredictModel:'mô hình', skPredictX:'X vào', skPredictTo:'→ kết quả',
+  skScore:'📈 Tính độ chính xác', skScoreModel:'mô hình', skScoreX:'X_test', skScoreY:'y_test', skScorePrint:'và in ra',
+  skReport:'📋 In báo cáo phân loại', skReportTrue:'y thật', skReportPred:'y dự đoán',
+  tipClear:'Xóa toàn bộ khung vẽ', tipBg:'Tô màu nền', tipStroke:'Đặt màu và độ rộng nét', tipFill:'Đặt màu tô',
+  tipLine:'Vẽ đường thẳng', tipRect:'Vẽ hình chữ nhật', tipCircle:'Vẽ hình tròn', tipEllipse:'Vẽ hình elip',
+  tipPoly:'Vẽ đa giác đều', tipDrawText:'Viết văn bản lên khung',
+  tipSkDataset:'Tải bộ dữ liệu có sẵn của sklearn', tipSkSplit:'Chia dữ liệu thành tập train/test',
+  tipSkModel:'Tạo mô hình ML', tipSkFit:'Huấn luyện mô hình', tipSkPredict:'Dự đoán dữ liệu mới',
+  tipSkScore:'Tính độ chính xác', tipSkReport:'In báo cáo chi tiết',
+  galSecDraw:'🎨 Ví dụ vẽ hình', galSecNumpy:'🔬 Ví dụ NumPy', galSecSklearn:'🤖 Học máy',
+  tabBridge:'Kết nối', catBridge:'🔌 Kết nối',
+  secBridgeConn:'── Cài đặt kết nối ──', secBridgeIO:'── Truyền nhận dữ liệu ──', secBridgeAdv:'── Nâng cao ──',
+  blkBridgeUrl:'🔌 Đặt URL cầu nối',
+  blkBridgeSend:'📤 Gửi tới Local',
+  blkBridgeRecv:'📥 Nhận từ Local lưu vào',
+  blkBridgeWait:'⏳ Chờ nhận từ Local lưu vào', blkBridgeWaitSec:'giây',
+  blkBridgePoll:'📡 Vòng lặp nhận chu kỳ(s)', blkBridgePollInto:'dữ liệu vào',
+  blkBridgePollDo:'Mỗi lần chạy', blkBridgePollAfter:'Sau khi dừng',
+  galSecBridge:'🔌 Ví dụ kết nối',
+},
+en:{
+  modeBlock:'Blocks', btnRun:'Run', btnClearOutput:'Clear', btnExportPy:'⬇ .py', btnExportPng:'⬇ PNG',
+  tabOutput:'Output', tabCanvas:'Canvas', tabGallery:'Gallery', tabVar:'Variables',
+  canvasSize:'Canvas:', varEmpty:'No code executed', panelBlock:'Block Editor', panelCode:'Python Code',
+  engineLoading:'Loading Pyodide…', engineLoadingSklearn:'Loading scikit-learn…',
+  engineReady:'Ready ✓', engineFail:'Load Failed',
+  codeEditorHint:'# Python code (executed by Pyodide)',
+  initMsg1:'⏳ Loading Pyodide 0.25.1…', initMsg2:'📦 Loading numpy…',
+  initMsg3:'🤖 Loading scikit-learn (~10–20s)…',
+  initOk:'✅ All ready! numpy + scikit-learn loaded.',
+  initHint1:'💡 Ctrl+Enter to run', initHint2:'📚 Browse the Gallery for example programs',
+  runStart:'\n── Run started ──', runDone:'── Done ──\n',
+  runWarn:'⚠️ No code to execute', pyNotReady:'⚠️ Engine not ready',
+  noVar:'No user variables', langOverlay:'Switching language…',
+  exportPyOk:'✅ .py downloaded', exportPngOk:'✅ PNG downloaded',
+  exportPngWarn:'⚠️ Draw something on Canvas first',
+  catDraw:'🎨 Drawing', catPrint:'🐍 Output', catVar:'📦 Variables', catMath:'🔢 Math',
+  catLoop:'🔁 Loops', catLogic:'🔀 Logic', catFn:'⚙️ Functions', catNumpy:'🔬 NumPy',
+  catSklearn:'🤖 scikit-learn',
+  secCanvas:'── Canvas Setup ──', secPen:'── Pen Setup ──', secShape:'── Shapes ──', secText:'── Text ──',
+  secSkData:'── Datasets ──', secSkModel:'── Create Model ──', secSkTrain:'── Train & Evaluate ──',
+  blkClear:'🗑️ Clear Canvas', blkBg:'🖼️ Background Color', blkStroke:'✏️ Stroke Color',
+  blkStrokeW:'Width', blkFill:'🪣 Fill Color',
+  blkLine:'📏 Draw Line From(', blkLineTo:') To(', blkLineEnd:')',
+  blkRect:'▭ Rectangle Top-left(', blkRectW:') Width', blkRectH:'Height', blkRectFill:'Fill',
+  blkCircle:'⭕ Circle Center(', blkCircleR:') Radius', blkCircleFill:'Fill',
+  blkEllipse:'🥚 Ellipse Center(', blkEllipseRx:') X-radius', blkEllipseRy:'Y-radius', blkEllipseFill:'Fill',
+  blkPoly:'⬡ Polygon Sides', blkPolyCenter:'Center(', blkPolyR:') Radius', blkPolyFill:'Fill',
+  blkDrawText:'🔤 Text', blkDrawTextAt:'At(', blkDrawTextSize:') Size', blkDrawTextColor:'Color',
+  skDataset:'📊 Load Dataset', skDatasetVar:'into', skSplit:'✂️ Train/Test Split',
+  skSplitX:'X data', skSplitY:'y labels', skSplitRatio:'test ratio', skSplitSeed:'random seed',
+  skSplitTo:'→ X_train,X_test,y_train,y_test',
+  skModel:'🤖 Create Model', skModelVar:'into', skModelKnn:'KNN Classifier', skModelLr:'Linear Regression',
+  skModelDt:'Decision Tree', skModelSvm:'SVM Classifier', skModelK:'K',
+  skFit:'🏋️ Train', skFitModel:'model', skFitX:'X_train', skFitY:'y_train',
+  skPredict:'🔮 Predict', skPredictModel:'model', skPredictX:'X input', skPredictTo:'→ result',
+  skScore:'📈 Accuracy Score', skScoreModel:'model', skScoreX:'X_test', skScoreY:'y_test', skScorePrint:'and print',
+  skReport:'📋 Print Classification Report', skReportTrue:'true y', skReportPred:'pred y',
+  tipClear:'Clear the entire canvas', tipBg:'Fill canvas background', tipStroke:'Set stroke color & width', tipFill:'Set fill color',
+  tipLine:'Draw a straight line', tipRect:'Draw a rectangle', tipCircle:'Draw a circle', tipEllipse:'Draw an ellipse',
+  tipPoly:'Draw a regular polygon', tipDrawText:'Draw text on canvas',
+  tipSkDataset:'Load a built-in sklearn dataset', tipSkSplit:'Split data into train/test sets',
+  tipSkModel:'Create an ML model', tipSkFit:'Train the model', tipSkPredict:'Predict on new data',
+  tipSkScore:'Calculate accuracy score', tipSkReport:'Print detailed classification report',
+  galSecDraw:'🎨 Drawing Examples', galSecNumpy:'🔬 NumPy Examples', galSecSklearn:'🤖 Machine Learning',
+  tabBridge:'Bridge', catBridge:'🔌 Bridge',
+  secBridgeConn:'── Connection ──', secBridgeIO:'── Data I/O ──', secBridgeAdv:'── Advanced ──',
+  blkBridgeUrl:'🔌 Set Bridge URL',
+  blkBridgeSend:'📤 Send to Local',
+  blkBridgeRecv:'📥 Receive from Local into',
+  blkBridgeWait:'⏳ Wait Receive into', blkBridgeWaitSec:'sec',
+  blkBridgePoll:'📡 Poll Loop interval(s)', blkBridgePollInto:'data into',
+  blkBridgePollDo:'Each time run', blkBridgePollAfter:'After stop run',
+  galSecBridge:'🔌 Bridge Examples',
+}};
+let currentLang = 'zh';
+const T = () => LANG_TABLE[currentLang];
+
+// ═══════════════════════════════════════════════════════════════════════
+//  S1 ── BLOCK DEFINITIONS
+// ═══════════════════════════════════════════════════════════════════════
+function defineCustomBlocks(){
+  const t = T();
+  // ── Drawing blocks ────────────────────────────────────────────────
+  Blockly.Blocks['draw_clear']={init(){this.appendDummyInput().appendField(t.blkClear);this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#9B59B6');this.setTooltip(t.tipClear);}};
+  Blockly.Blocks['draw_set_bg']={init(){this.appendDummyInput().appendField(t.blkBg).appendField(new Blockly.FieldColour('#ffffff'),'COLOR');this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#9B59B6');this.setTooltip(t.tipBg);}};
+  Blockly.Blocks['draw_set_stroke']={init(){this.appendDummyInput().appendField(t.blkStroke).appendField(new Blockly.FieldColour('#000000'),'COLOR').appendField(t.blkStrokeW).appendField(new Blockly.FieldNumber(2,.5,50,.5),'WIDTH');this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#9B59B6');this.setTooltip(t.tipStroke);}};
+  Blockly.Blocks['draw_set_fill']={init(){this.appendDummyInput().appendField(t.blkFill).appendField(new Blockly.FieldColour('#ff0000'),'COLOR');this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#9B59B6');this.setTooltip(t.tipFill);}};
+  Blockly.Blocks['draw_line']={init(){this.appendDummyInput().appendField(t.blkLine).appendField(new Blockly.FieldNumber(50,0),'X1').appendField(',').appendField(new Blockly.FieldNumber(50,0),'Y1').appendField(t.blkLineTo).appendField(new Blockly.FieldNumber(250,0),'X2').appendField(',').appendField(new Blockly.FieldNumber(200,0),'Y2').appendField(t.blkLineEnd);this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#E74C3C');this.setTooltip(t.tipLine);}};
+  Blockly.Blocks['draw_rect']={init(){this.appendDummyInput().appendField(t.blkRect).appendField(new Blockly.FieldNumber(60,0),'X').appendField(',').appendField(new Blockly.FieldNumber(60,0),'Y').appendField(t.blkRectW).appendField(new Blockly.FieldNumber(120,1),'W').appendField(t.blkRectH).appendField(new Blockly.FieldNumber(80,1),'H').appendField(t.blkRectFill).appendField(new Blockly.FieldCheckbox('TRUE'),'FILL');this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#27AE60');this.setTooltip(t.tipRect);}};
+  Blockly.Blocks['draw_circle']={init(){this.appendDummyInput().appendField(t.blkCircle).appendField(new Blockly.FieldNumber(150,0),'CX').appendField(',').appendField(new Blockly.FieldNumber(150,0),'CY').appendField(t.blkCircleR).appendField(new Blockly.FieldNumber(60,1),'R').appendField(t.blkCircleFill).appendField(new Blockly.FieldCheckbox('TRUE'),'FILL');this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#3498DB');this.setTooltip(t.tipCircle);}};
+  Blockly.Blocks['draw_ellipse']={init(){this.appendDummyInput().appendField(t.blkEllipse).appendField(new Blockly.FieldNumber(150,0),'CX').appendField(',').appendField(new Blockly.FieldNumber(150,0),'CY').appendField(t.blkEllipseRx).appendField(new Blockly.FieldNumber(80,1),'RX').appendField(t.blkEllipseRy).appendField(new Blockly.FieldNumber(50,1),'RY').appendField(t.blkEllipseFill).appendField(new Blockly.FieldCheckbox('TRUE'),'FILL');this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#E67E22');this.setTooltip(t.tipEllipse);}};
+  Blockly.Blocks['draw_polygon']={init(){this.appendDummyInput().appendField(t.blkPoly).appendField(new Blockly.FieldNumber(6,3,20,1),'SIDES').appendField(t.blkPolyCenter).appendField(new Blockly.FieldNumber(150,0),'CX').appendField(',').appendField(new Blockly.FieldNumber(150,0),'CY').appendField(t.blkPolyR).appendField(new Blockly.FieldNumber(70,5),'R').appendField(t.blkPolyFill).appendField(new Blockly.FieldCheckbox('TRUE'),'FILL');this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#16A085');this.setTooltip(t.tipPoly);}};
+  Blockly.Blocks['draw_text']={init(){this.appendDummyInput().appendField(t.blkDrawText).appendField(new Blockly.FieldTextInput('Hello!'),'TEXT').appendField(t.blkDrawTextAt).appendField(new Blockly.FieldNumber(50,0),'X').appendField(',').appendField(new Blockly.FieldNumber(50,0),'Y').appendField(t.blkDrawTextSize).appendField(new Blockly.FieldNumber(20,6,200,1),'SIZE').appendField(t.blkDrawTextColor).appendField(new Blockly.FieldColour('#333333'),'COLOR');this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#8E44AD');this.setTooltip(t.tipDrawText);}};
+  // NumPy
+  Blockly.Blocks['numpy_import']={init(){this.appendDummyInput().appendField('import numpy as').appendField(new Blockly.FieldTextInput('np'),'ALIAS');this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#3498DB');}};
+  Blockly.Blocks['numpy_arange']={init(){this.appendDummyInput().appendField('np.arange(').appendField(new Blockly.FieldNumber(0),'START').appendField(',').appendField(new Blockly.FieldNumber(10),'STOP').appendField(',').appendField(new Blockly.FieldNumber(1),'STEP').appendField(')');this.setOutput(true);this.setColour('#3498DB');}};
+  Blockly.Blocks['numpy_mean']={init(){this.appendValueInput('ARR').appendField('np.mean(');this.appendDummyInput().appendField(')');this.setInputsInline(true);this.setOutput(true);this.setColour('#3498DB');}};
+  Blockly.Blocks['numpy_sum']={init(){this.appendValueInput('ARR').appendField('np.sum(');this.appendDummyInput().appendField(')');this.setInputsInline(true);this.setOutput(true);this.setColour('#3498DB');}};
+
+  // ── scikit-learn blocks ──────────────────────────────────────────
+  // 1. Load dataset
+  Blockly.Blocks['sk_load_dataset']={
+    init(){
+      this.appendDummyInput()
+        .appendField(t.skDataset)
+        .appendField(new Blockly.FieldDropdown([
+          ['Iris (分類)','iris'],['Wine (分類)','wine'],
+          ['Breast Cancer (分類)','breast_cancer'],['Digits (分類)','digits'],
+          ['California Housing (迴歸)','california_housing'],
+        ]),'DATASET')
+        .appendField(t.skDatasetVar)
+        .appendField(new Blockly.FieldTextInput('X, y'),'VARNAME');
+      this.setPreviousStatement(true);this.setNextStatement(true);
+      this.setColour('#1abc9c');this.setTooltip(t.tipSkDataset);
+    }
+  };
+  // 2. Train/test split
+  Blockly.Blocks['sk_train_test_split']={
+    init(){
+      this.appendDummyInput()
+        .appendField(t.skSplit)
+        .appendField(t.skSplitX)
+        .appendField(new Blockly.FieldTextInput('X'),'X')
+        .appendField(t.skSplitY)
+        .appendField(new Blockly.FieldTextInput('y'),'Y')
+        .appendField(t.skSplitRatio)
+        .appendField(new Blockly.FieldNumber(0.2,0.05,0.5,0.05),'RATIO')
+        .appendField(t.skSplitSeed)
+        .appendField(new Blockly.FieldNumber(42,0),'SEED');
+      this.appendDummyInput().appendField(t.skSplitTo);
+      this.setPreviousStatement(true);this.setNextStatement(true);
+      this.setColour('#1abc9c');this.setTooltip(t.tipSkSplit);
+    }
+  };
+  // 3. Create model
+  Blockly.Blocks['sk_create_model']={
+    init(){
+      const dd = new Blockly.FieldDropdown([
+        [t.skModelKnn||'KNN','knn'],[t.skModelLr||'Linear Regression','lr'],
+        [t.skModelDt||'Decision Tree','dt'],[t.skModelSvm||'SVM','svm'],
+      ], v => {
+        this.updateKField_(v);
+      });
+      this.appendDummyInput()
+        .appendField(t.skModel)
+        .appendField(dd,'MODEL_TYPE')
+        .appendField(t.skModelVar)
+        .appendField(new Blockly.FieldTextInput('model'),'VARNAME');
+      this.appendDummyInput('K_ROW')
+        .appendField(t.skModelK)
+        .appendField(new Blockly.FieldNumber(3,1,50,1),'K');
+      this.setPreviousStatement(true);this.setNextStatement(true);
+      this.setColour('#1abc9c');this.setTooltip(t.tipSkModel);
+    },
+    updateKField_(type){
+      const kr = this.getInput('K_ROW');
+      if(kr) kr.setVisible(type==='knn');
+    }
+  };
+  // 4. Fit
+  Blockly.Blocks['sk_fit']={
+    init(){
+      this.appendDummyInput()
+        .appendField(t.skFit)
+        .appendField(t.skFitModel).appendField(new Blockly.FieldTextInput('model'),'MODEL')
+        .appendField(t.skFitX).appendField(new Blockly.FieldTextInput('X_train'),'X')
+        .appendField(t.skFitY).appendField(new Blockly.FieldTextInput('y_train'),'Y');
+      this.setPreviousStatement(true);this.setNextStatement(true);
+      this.setColour('#1abc9c');this.setTooltip(t.tipSkFit);
+    }
+  };
+  // 5. Predict
+  Blockly.Blocks['sk_predict']={
+    init(){
+      this.appendDummyInput()
+        .appendField(t.skPredict)
+        .appendField(t.skPredictModel).appendField(new Blockly.FieldTextInput('model'),'MODEL')
+        .appendField(t.skPredictX).appendField(new Blockly.FieldTextInput('X_test'),'X')
+        .appendField(t.skPredictTo).appendField(new Blockly.FieldTextInput('y_pred'),'RESULT');
+      this.setPreviousStatement(true);this.setNextStatement(true);
+      this.setColour('#1abc9c');this.setTooltip(t.tipSkPredict);
+    }
+  };
+  // 6. Score
+  Blockly.Blocks['sk_score']={
+    init(){
+      this.appendDummyInput()
+        .appendField(t.skScore)
+        .appendField(t.skScoreModel).appendField(new Blockly.FieldTextInput('model'),'MODEL')
+        .appendField(t.skScoreX).appendField(new Blockly.FieldTextInput('X_test'),'X')
+        .appendField(t.skScoreY).appendField(new Blockly.FieldTextInput('y_test'),'Y')
+        .appendField(t.skScorePrint).appendField(new Blockly.FieldCheckbox('TRUE'),'PRINT');
+      this.setPreviousStatement(true);this.setNextStatement(true);
+      this.setColour('#1abc9c');this.setTooltip(t.tipSkScore);
+    }
+  };
+  // 7. Classification report
+  Blockly.Blocks['sk_report']={
+    init(){
+      this.appendDummyInput()
+        .appendField(t.skReport)
+        .appendField(t.skReportTrue).appendField(new Blockly.FieldTextInput('y_test'),'TRUE_Y')
+        .appendField(t.skReportPred).appendField(new Blockly.FieldTextInput('y_pred'),'PRED_Y');
+      this.setPreviousStatement(true);this.setNextStatement(true);
+      this.setColour('#1abc9c');this.setTooltip(t.tipSkReport);
+    }
+  };
+}
+
+// ── Python generators (language-independent) ─────────────────────
+
+// ── Bridge blocks ─────────────────────────────────────────────────────
+function defineBridgeBlocks() {
+  const t = T();
+
+  // B1: Set URL
+  Blockly.Blocks['bridge_set_url'] = {
+    init() {
+      this.appendDummyInput()
+        .appendField(t.blkBridgeUrl)
+        .appendField(new Blockly.FieldTextInput('http://localhost:8765'), 'URL');
+      this.setPreviousStatement(true);
+      this.setNextStatement(true);
+      this.setColour('#f39c12');
+    }
+  };
+
+  // B2: Send to local
+  Blockly.Blocks['bridge_send'] = {
+    init() {
+      this.appendValueInput('VALUE').appendField(t.blkBridgeSend);
+      this.setInputsInline(true);
+      this.setPreviousStatement(true);
+      this.setNextStatement(true);
+      this.setColour('#f39c12');
+    }
+  };
+
+  // B3: Receive (non-blocking)
+  Blockly.Blocks['bridge_recv'] = {
+    init() {
+      this.appendDummyInput()
+        .appendField(t.blkBridgeRecv)
+        .appendField(new Blockly.FieldVariable('received'), 'VAR');
+      this.setPreviousStatement(true);
+      this.setNextStatement(true);
+      this.setColour('#f39c12');
+    }
+  };
+
+  // B4: Wait-receive with timeout
+  Blockly.Blocks['bridge_wait'] = {
+    init() {
+      this.appendDummyInput()
+        .appendField(t.blkBridgeWait)
+        .appendField(new Blockly.FieldVariable('received'), 'VAR')
+        .appendField(t.blkBridgeWaitSec)
+        .appendField(new Blockly.FieldNumber(5, 0.5, 300, 0.5), 'SEC');
+      this.setPreviousStatement(true);
+      this.setNextStatement(true);
+      this.setColour('#f39c12');
+    }
+  };
+
+  // B5: Poll loop
+  Blockly.Blocks['bridge_poll'] = {
+    init() {
+      this.appendDummyInput()
+        .appendField(t.blkBridgePoll)
+        .appendField(new Blockly.FieldNumber(0.5, 0.1, 60, 0.1), 'IV')
+        .appendField(t.blkBridgePollInto)
+        .appendField(new Blockly.FieldVariable('received'), 'VAR');
+      this.appendStatementInput('DO').appendField(t.blkBridgePollDo);
+      this.appendStatementInput('AFTER').appendField(t.blkBridgePollAfter);
+      this.setPreviousStatement(true);
+      this.setNextStatement(true);
+      this.setColour('#f39c12');
+    }
+  };
+}
+
+function defineBridgeGenerators() {
+  // ★ Blockly v10 forBlock API
+  const fb = Blockly.Python.forBlock;
+
+  fb['bridge_set_url'] = (b, gen) => {
+    const url = b.getFieldValue("URL");
+    return `_bridge_url = "${url}"\n`;
+  };
+
+  fb['bridge_send'] = (b, gen) => {
+    const val = gen.valueToCode(b, "VALUE", gen.Order.NONE) || "''";
+    return [
+      "from pyodide.http import pyfetch as _pf",
+      "import json as _bj",
+      "try:",
+      `    _bs = await _pf(_bridge_url + "/send", method="POST",`,
+      `        headers={"Content-Type": "application/json"},`,
+      `        body=_bj.dumps({"value": str(${val})}))`,
+      `    _bd = await _bs.json()`,
+      `    print("\ud83d\udce4 sent ok  queue:" + str(_bd.get("queue","?")))`,
+      "except Exception as _be:",
+      `    print("\u274c bridge send error: " + str(_be))`,
+      ""
+    ].join("\n");
+  };
+
+  fb['bridge_recv'] = (b, gen) => {
+    const vn = gen.nameDB_.getName(b.getFieldValue("VAR"), Blockly.Names.NameType.VARIABLE);
+    return [
+      "from pyodide.http import pyfetch as _pf",
+      "try:",
+      `    _br = await _pf(_bridge_url + "/pull")`,
+      `    _bd = await _br.json()`,
+      `    ${vn} = _bd["value"] if not _bd["empty"] else None`,
+      `    if ${vn} is not None: print("\ud83d\udce5 recv: " + str(${vn}))`,
+      "except Exception as _be:",
+      `    ${vn} = None`,
+      `    print("\u274c bridge recv error: " + str(_be))`,
+      ""
+    ].join("\n");
+  };
+
+  fb['bridge_wait'] = (b, gen) => {
+    const vn  = gen.nameDB_.getName(b.getFieldValue("VAR"), Blockly.Names.NameType.VARIABLE);
+    const sec = b.getFieldValue("SEC");
+    return [
+      "from pyodide.http import pyfetch as _pf",
+      "import asyncio as _aio",
+      `${vn} = None`,
+      "_bwt0 = _aio.get_event_loop().time()",
+      "while True:",
+      "    try:",
+      `        _bwr = await _pf(_bridge_url + "/pull")`,
+      `        _bwd = await _bwr.json()`,
+      `        if not _bwd["empty"]:`,
+      `            ${vn} = _bwd["value"]`,
+      `            print("\ud83d\udce5 recv: " + str(${vn}))`,
+      "            break",
+      "    except Exception as _bwe:",
+      `        print("\u274c bridge wait error: " + str(_bwe))`,
+      "        break",
+      `    if _aio.get_event_loop().time() - _bwt0 > ${sec}:`,
+      `        print("\u23f1 recv timeout")`,
+      "        break",
+      "    await _aio.sleep(0.3)",
+      ""
+    ].join("\n");
+  };
+
+  fb['bridge_poll'] = (b, gen) => {
+    const vn       = gen.nameDB_.getName(b.getFieldValue("VAR"), Blockly.Names.NameType.VARIABLE);
+    const iv       = b.getFieldValue("IV");
+    const bodyCode = gen.statementToCode(b, "DO")    || "    pass\n";
+    const afterCode= gen.statementToCode(b, "AFTER") || "    pass\n";
+    return [
+      "from pyodide.http import pyfetch as _pf",
+      "import asyncio as _aio",
+      "while True:",
+      "    try:",
+      `        _bpl = await _pf(_bridge_url + "/pull")`,
+      `        _bpd = await _bpl.json()`,
+      `        if not _bpd["empty"]:`,
+      `            ${vn} = _bpd["value"]`,
+      bodyCode.replace(/^/gm, "    "),
+      "    except Exception as _bpe:",
+      `        print("\u274c bridge poll error: " + str(_bpe))`,
+      "        break",
+      `    await _aio.sleep(${iv})`,
+      afterCode,
+      ""
+    ].join("\n");
+  };
+}
+
+function definePythonGenerators(){
+  // ★ Blockly v10：必須用 forBlock，不可直接指定 Blockly.Python['xxx']
+  const fb = Blockly.Python.forBlock;
+
+  // ── 繪圖積木 → 產生乾淨的 screen.* Python ─────────────────────
+  // screen 物件在 initPyodide 中注入至 Pyodide 命名空間
+  fb['draw_clear']     = (b, gen) => `screen.clear()\n`;
+  fb['draw_set_bg']    = (b, gen) => `screen.set_bg('${b.getFieldValue("COLOR")}')\n`;
+  fb['draw_set_stroke']= (b, gen) => `screen.set_stroke('${b.getFieldValue("COLOR")}', ${b.getFieldValue("WIDTH")})\n`;
+  fb['draw_set_fill']  = (b, gen) => `screen.set_fill('${b.getFieldValue("COLOR")}')\n`;
+  fb['draw_line']      = (b, gen) => `screen.draw_line(${b.getFieldValue("X1")}, ${b.getFieldValue("Y1")}, ${b.getFieldValue("X2")}, ${b.getFieldValue("Y2")})\n`;
+  fb['draw_rect']      = (b, gen) => `screen.draw_rect(${b.getFieldValue("X")}, ${b.getFieldValue("Y")}, ${b.getFieldValue("W")}, ${b.getFieldValue("H")}, fill=${b.getFieldValue("FILL")==="TRUE"?"True":"False"})\n`;
+  fb['draw_circle']    = (b, gen) => `screen.draw_circle(${b.getFieldValue("CX")}, ${b.getFieldValue("CY")}, ${b.getFieldValue("R")}, fill=${b.getFieldValue("FILL")==="TRUE"?"True":"False"})\n`;
+  fb['draw_ellipse']   = (b, gen) => `screen.draw_ellipse(${b.getFieldValue("CX")}, ${b.getFieldValue("CY")}, ${b.getFieldValue("RX")}, ${b.getFieldValue("RY")}, fill=${b.getFieldValue("FILL")==="TRUE"?"True":"False"})\n`;
+  fb['draw_polygon']   = (b, gen) => `screen.draw_polygon(${b.getFieldValue("SIDES")}, ${b.getFieldValue("CX")}, ${b.getFieldValue("CY")}, ${b.getFieldValue("R")}, fill=${b.getFieldValue("FILL")==="TRUE"?"True":"False"})\n`;
+  fb['draw_text']      = (b, gen) => {
+    const tx = b.getFieldValue("TEXT").replace(/\\/g,"\\\\").replace(/'/g,"\\'");
+    return `screen.draw_text('${tx}', ${b.getFieldValue("X")}, ${b.getFieldValue("Y")}, ${b.getFieldValue("SIZE")}, '${b.getFieldValue("COLOR")}')\n`;
+  };
+
+  // ── NumPy ──────────────────────────────────────────────────────
+  fb['numpy_import'] = (b, gen) => `import numpy as ${b.getFieldValue("ALIAS")}\n`;
+  fb['numpy_arange'] = (b, gen) => [`np.arange(${b.getFieldValue("START")}, ${b.getFieldValue("STOP")}, ${b.getFieldValue("STEP")})`, gen.Order.FUNCTION_CALL];
+  fb['numpy_mean']   = (b, gen) => [`np.mean(${gen.valueToCode(b, "ARR", gen.Order.NONE) || "None"})`, gen.Order.FUNCTION_CALL];
+  fb['numpy_sum']    = (b, gen) => [`np.sum(${gen.valueToCode(b, "ARR", gen.Order.NONE) || "None"})`,  gen.Order.FUNCTION_CALL];
+
+  // ── scikit-learn ───────────────────────────────────────────────
+  fb['sk_load_dataset'] = (b, gen) => {
+    const ds = b.getFieldValue("DATASET"), vn = b.getFieldValue("VARNAME");
+    const loaders = {iris:"load_iris",wine:"load_wine",breast_cancer:"load_breast_cancer",digits:"load_digits",california_housing:"fetch_california_housing"};
+    return `from sklearn.datasets import ${loaders[ds]}\n_ds=${loaders[ds]}()\n${vn} = _ds.data, _ds.target\n`;
+  };
+  fb['sk_train_test_split'] = (b, gen) =>
+    `from sklearn.model_selection import train_test_split\n` +
+    `X_train, X_test, y_train, y_test = train_test_split(${b.getFieldValue("X")}, ${b.getFieldValue("Y")}, test_size=${b.getFieldValue("RATIO")}, random_state=${b.getFieldValue("SEED")})\n`;
+  fb['sk_create_model'] = (b, gen) => {
+    const type=b.getFieldValue("MODEL_TYPE"), vn=b.getFieldValue("VARNAME"), k=b.getFieldValue("K");
+    const snippets={
+      knn:`from sklearn.neighbors import KNeighborsClassifier\n${vn} = KNeighborsClassifier(n_neighbors=${k})\n`,
+      lr: `from sklearn.linear_model import LinearRegression\n${vn} = LinearRegression()\n`,
+      dt: `from sklearn.tree import DecisionTreeClassifier\n${vn} = DecisionTreeClassifier(random_state=42)\n`,
+      svm:`from sklearn.svm import SVC\n${vn} = SVC(random_state=42)\n`,
+    };
+    return snippets[type] || "";
+  };
+  fb['sk_fit']     = (b, gen) => `${b.getFieldValue("MODEL")}.fit(${b.getFieldValue("X")}, ${b.getFieldValue("Y")})\nprint("\u2705 Model trained!")\n`;
+  fb['sk_predict'] = (b, gen) => `${b.getFieldValue("RESULT")} = ${b.getFieldValue("MODEL")}.predict(${b.getFieldValue("X")})\n`;
+  fb['sk_score']   = (b, gen) => {
+    const p = b.getFieldValue("PRINT") === "TRUE";
+    return `_acc = ${b.getFieldValue("MODEL")}.score(${b.getFieldValue("X")}, ${b.getFieldValue("Y")})\n` +
+           (p ? `print(f"\U0001f4c8 Accuracy: {_acc:.4f} ({_acc*100:.2f}%)")\n` : "");
+  };
+  fb['sk_report'] = (b, gen) =>
+    `from sklearn.metrics import classification_report\nprint(classification_report(${b.getFieldValue("TRUE_Y")}, ${b.getFieldValue("PRED_Y")}))\n`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  S2 ── TOOLBOX XML GENERATOR
+// ═══════════════════════════════════════════════════════════════════════
+function buildToolboxXml(){
+  const t=T();
+  return `<xml>
+  <category name="${t.catDraw}" colour="#9B59B6">
+    <label text="${t.secCanvas}"></label>
+    <block type="draw_clear"></block>
+    <block type="draw_set_bg"><field name="COLOR">#ffffff</field></block>
+    <label text="${t.secPen}"></label>
+    <block type="draw_set_stroke"><field name="COLOR">#000000</field><field name="WIDTH">2</field></block>
+    <block type="draw_set_fill"><field name="COLOR">#ff0000</field></block>
+    <label text="${t.secShape}"></label>
+    <block type="draw_line"><field name="X1">50</field><field name="Y1">50</field><field name="X2">250</field><field name="Y2">200</field></block>
+    <block type="draw_rect"><field name="X">60</field><field name="Y">60</field><field name="W">120</field><field name="H">80</field><field name="FILL">TRUE</field></block>
+    <block type="draw_circle"><field name="CX">150</field><field name="CY">150</field><field name="R">60</field><field name="FILL">TRUE</field></block>
+    <block type="draw_ellipse"><field name="CX">150</field><field name="CY">150</field><field name="RX">80</field><field name="RY">50</field><field name="FILL">TRUE</field></block>
+    <block type="draw_polygon"><field name="SIDES">6</field><field name="CX">150</field><field name="CY">150</field><field name="R">70</field><field name="FILL">TRUE</field></block>
+    <label text="${t.secText}"></label>
+    <block type="draw_text"><field name="TEXT">Hello!</field><field name="X">50</field><field name="Y">50</field><field name="SIZE">20</field><field name="COLOR">#333333</field></block>
+  </category>
+  <sep></sep>
+  <category name="${t.catPrint}" colour="#4A90D9">
+    <block type="text_print"><value name="TEXT"><block type="text"><field name="TEXT">Hello!</field></block></value></block>
+  </category>
+  <category name="${t.catVar}" colour="#E6941A" custom="VARIABLE"></category>
+  <category name="${t.catMath}" colour="#5C81A6">
+    <block type="math_number"><field name="NUM">0</field></block>
+    <block type="math_arithmetic"></block><block type="math_round"></block>
+    <block type="math_random_int"><value name="FROM"><block type="math_number"><field name="NUM">1</field></block></value><value name="TO"><block type="math_number"><field name="NUM">100</field></block></value></block>
+    <block type="math_trig"></block><block type="math_constant"></block>
+  </category>
+  <category name="${t.catLoop}" colour="#9A5BA5">
+    <block type="controls_repeat_ext"><value name="TIMES"><block type="math_number"><field name="NUM">10</field></block></value></block>
+    <block type="controls_for"></block><block type="controls_whileUntil"></block>
+  </category>
+  <category name="${t.catLogic}" colour="#5BA58C">
+    <block type="controls_if"></block><block type="logic_compare"></block><block type="logic_operation"></block>
+  </category>
+  <category name="${t.catFn}" colour="#A5745B" custom="PROCEDURE"></category>
+  <sep></sep>
+  <category name="${t.catNumpy}" colour="#3498DB">
+    <block type="numpy_import"></block><block type="numpy_arange"></block>
+    <block type="numpy_mean"></block><block type="numpy_sum"></block>
+  </category>
+  <category name="${t.catSklearn}" colour="#1abc9c">
+    <label text="${t.secSkData}"></label>
+    <block type="sk_load_dataset"></block>
+    <block type="sk_train_test_split"></block>
+    <label text="${t.secSkModel}"></label>
+    <block type="sk_create_model"></block>
+    <label text="${t.secSkTrain}"></label>
+    <block type="sk_fit"></block>
+    <block type="sk_predict"></block>
+    <block type="sk_score"></block>
+    <block type="sk_report"></block>
+  </category>
+  <sep></sep>
+  <category name="${t.catBridge}" colour="#f39c12">
+    <label text="${t.secBridgeConn}"></label>
+    <block type="bridge_set_url"><field name="URL">http://127.0.0.1:8765</field></block>
+    <label text="${t.secBridgeIO}"></label>
+    <block type="bridge_send">
+      <value name="VALUE"><block type="text"><field name="TEXT">Hello from BlockPy!</field></block></value>
+    </block>
+    <block type="bridge_recv"><field name="VAR">received</field></block>
+    <label text="${t.secBridgeAdv}"></label>
+    <block type="bridge_wait"><field name="VAR">received</field><field name="SEC">5</field></block>
+    <block type="bridge_poll"><field name="IV">0.5</field><field name="VAR">received</field></block>
+  </category>
+  </xml>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  S3 ── GALLERY DATA
+//  每張卡：{ icon, titleKey(i18n用), descKey, tag, mode:'blocks'|'python', data }
+//  blocks → xml string; python → code string
+// ═══════════════════════════════════════════════════════════════════════
+const GALLERY = [
+  {
+    sec: 'galSecDraw',
+    cards: [
+      {
+        icon:'🌈', title:'彩虹圓弧 / Rainbow Arcs / Vòng cung cầu vồng',
+        desc: currentLang==='vi'?'Vẽ vòng cung nhiều màu bằng vòng lặp':'用迴圈畫出彩虹色弧線',
+        tag:'tag-draw', tagLabel:'Drawing', mode:'python',
+        data:`import math
+import js
+
+canvas = js.document.getElementById('drawCanvas')
+ctx = canvas.getContext('2d')
+ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+# Dark background
+ctx.fillStyle = '#0a0a1a'
+ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+colors = ['#ff0000','#ff7700','#ffff00','#00ff00','#0077ff','#8800ff','#ff00ff']
+cx, cy = canvas.width // 2, canvas.height
+for i, color in enumerate(reversed(colors)):
+    r = 60 + i * 30
+    ctx.beginPath()
+    ctx.strokeStyle = color
+    ctx.lineWidth = 22
+    ctx.arc(cx, cy, r, math.pi, 0)
+    ctx.stroke()
+
+ctx.fillStyle = '#ffffff'
+ctx.font = '18px Sora, sans-serif'
+ctx.fillText('🌈 Rainbow', cx - 45, cy - 235)
+print('彩虹繪製完成！')
+`
+      },
+      {
+        icon:'⭐', title:'星形圖案 / Star Pattern / Ngôi sao',
+        desc:'正多邊形組合出星形圖案',
+        tag:'tag-draw', tagLabel:'Drawing', mode:'python',
+        data:`import math
+import js
+
+canvas = js.document.getElementById('drawCanvas')
+ctx = canvas.getContext('2d')
+ctx.clearRect(0, 0, canvas.width, canvas.height)
+ctx.fillStyle = '#0f3460'
+ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+def draw_star(ctx, cx, cy, r_out, r_in, points, color):
+    ctx.beginPath()
+    ctx.fillStyle = color
+    for i in range(points * 2):
+        angle = math.pi * i / points - math.pi / 2
+        r = r_out if i % 2 == 0 else r_in
+        x = cx + r * math.cos(angle)
+        y = cy + r * math.sin(angle)
+        ctx.moveTo(cx, cy) if i == 0 else ctx.lineTo(x, y)
+    ctx.closePath()
+    ctx.fill()
+
+colors = ['#f1c40f','#e74c3c','#3498db','#2ecc71','#9b59b6']
+for i, c in enumerate(colors):
+    angle = 2 * math.pi * i / len(colors)
+    cx_ = 240 + 110 * math.cos(angle)
+    cy_ = 180 + 90 * math.sin(angle)
+    draw_star(ctx, cx_, cy_, 38, 16, 5, c)
+
+draw_star(ctx, 240, 180, 55, 22, 5, '#f39c12')
+print('⭐ 星形圖案完成！')
+`
+      },
+    ]
+  },
+  {
+    sec: 'galSecNumpy',
+    cards: [
+      {
+        icon:'📊', title:'NumPy 統計 / Statistics / Thống kê',
+        desc:'陣列建立、統計計算、印出結果',
+        tag:'tag-numpy', tagLabel:'NumPy', mode:'python',
+        data:`import numpy as np
+
+data = np.array([14, 23, 7, 41, 9, 18, 35, 52, 6, 29])
+print('=== NumPy 統計分析 ===')
+print(f'資料：{data}')
+print(f'平均值 (mean):    {np.mean(data):.2f}')
+print(f'中位數 (median):  {np.median(data):.2f}')
+print(f'標準差 (std):     {np.std(data):.2f}')
+print(f'最大值 (max):     {np.max(data)}')
+print(f'最小值 (min):     {np.min(data)}')
+print(f'總和   (sum):     {np.sum(data)}')
+print(f'形狀   (shape):   {data.shape}')
+
+matrix = np.arange(1, 10).reshape(3, 3)
+print(f'\\n矩陣：\\n{matrix}')
+print(f'轉置：\\n{matrix.T}')
+print(f'行平均：{np.mean(matrix, axis=0)}')
+print(f'列平均：{np.mean(matrix, axis=1)}')
+`
+      },
+    ]
+  },
+  {
+    sec: 'galSecSklearn',
+    cards: [
+      {
+        icon:'🌸', title:'KNN — Iris 分類 / Iris Classification',
+        desc:'載入 Iris 資料集，KNN 分類，顯示準確率與報告',
+        tag:'tag-sklearn', tagLabel:'scikit-learn', mode:'python',
+        data:`from sklearn.datasets import load_iris
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import classification_report, accuracy_score
+import numpy as np
+
+print('=== 🌸 KNN Iris 分類 ===')
+# 載入資料
+iris = load_iris()
+X, y = iris.data, iris.target
+print(f'資料集大小：{X.shape}，類別：{np.unique(y)}')
+print(f'類別名稱：{list(iris.target_names)}')
+
+# 分割訓練/測試集
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42)
+print(f'訓練集：{X_train.shape[0]} 筆，測試集：{X_test.shape[0]} 筆')
+
+# 建立與訓練模型
+for k in [1, 3, 5, 7]:
+    model = KNeighborsClassifier(n_neighbors=k)
+    model.fit(X_train, y_train)
+    acc = model.score(X_test, y_test)
+    print(f'K={k}  準確率 = {acc:.4f} ({acc*100:.1f}%)')
+
+# 最佳 K=5 詳細報告
+model = KNeighborsClassifier(n_neighbors=5)
+model.fit(X_train, y_train)
+y_pred = model.predict(X_test)
+print('\\n=== 分類報告 (K=5) ===')
+print(classification_report(y_test, y_pred,
+      target_names=iris.target_names))
+`
+      },
+      {
+        icon:'📈', title:'線性迴歸 / Linear Regression',
+        desc:'用 sklearn 線性迴歸預測簡單資料',
+        tag:'tag-sklearn', tagLabel:'scikit-learn', mode:'python',
+        data:`from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
+import numpy as np
+
+print('=== 📈 線性迴歸範例 ===')
+# 產生模擬資料
+np.random.seed(42)
+X = np.linspace(0, 10, 100).reshape(-1, 1)
+y = 2.5 * X.flatten() + 1.8 + np.random.randn(100) * 1.5
+
+# 分割
+from sklearn.model_selection import train_test_split
+X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=0)
+
+# 建立模型
+model = LinearRegression()
+model.fit(X_tr, y_tr)
+
+y_pred = model.predict(X_te)
+mse = mean_squared_error(y_te, y_pred)
+r2  = r2_score(y_te, y_pred)
+
+print(f'係數 (slope):     {model.coef_[0]:.4f}  (真實值 ≈ 2.5)')
+print(f'截距 (intercept): {model.intercept_:.4f}  (真實值 ≈ 1.8)')
+print(f'MSE:              {mse:.4f}')
+print(f'R² Score:         {r2:.4f}')
+print(f'\\n預測前5筆：')
+for i in range(5):
+    print(f'  X={X_te[i,0]:.2f}  真實={y_te[i]:.2f}  預測={y_pred[i]:.2f}')
+`
+      },
+      {
+        icon:'🌳', title:'決策樹 / Decision Tree',
+        desc:'Decision Tree 分類 Wine 資料集，顯示特徵重要性',
+        tag:'tag-sklearn', tagLabel:'scikit-learn', mode:'python',
+        data:`from sklearn.datasets import load_wine
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report
+import numpy as np
+
+print('=== 🌳 決策樹 Wine 分類 ===')
+wine = load_wine()
+X, y = wine.data, wine.target
+print(f'資料集：{X.shape}，類別：{list(wine.target_names)}')
+
+X_tr, X_te, y_tr, y_te = train_test_split(
+    X, y, test_size=0.25, random_state=42)
+
+# 比較不同深度
+print('\\n樹深度 vs 準確率：')
+for depth in [2, 3, 4, 5, None]:
+    dt = DecisionTreeClassifier(max_depth=depth, random_state=42)
+    dt.fit(X_tr, y_tr)
+    acc = dt.score(X_te, y_te)
+    label = str(depth) if depth else '無限制'
+    print(f'  max_depth={label:4s}  準確率={acc:.4f}')
+
+# 最終模型
+model = DecisionTreeClassifier(max_depth=4, random_state=42)
+model.fit(X_tr, y_tr)
+y_pred = model.predict(X_te)
+
+print('\\n=== 特徵重要性 (前5名) ===')
+fi = list(zip(wine.feature_names, model.feature_importances_))
+fi.sort(key=lambda x: -x[1])
+for name, imp in fi[:5]:
+    bar = '█' * int(imp * 40)
+    print(f'  {name[:20]:20s} {imp:.4f} {bar}')
+
+print(f'\\n最終準確率：{model.score(X_te, y_te):.4f}')
+`
+      },
+      {
+        icon:'🫧', title:'SVM 分類 / SVM Classification',
+        desc:'SVM 分類 Breast Cancer 資料集（二元分類）',
+        tag:'tag-sklearn', tagLabel:'scikit-learn', mode:'python',
+        data:`from sklearn.datasets import load_breast_cancer
+from sklearn.svm import SVC
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import classification_report
+
+print('=== 🫧 SVM Breast Cancer 分類 ===')
+bc = load_breast_cancer()
+X, y = bc.data, bc.target
+print(f'資料集：{X.shape}')
+print(f'類別 0 (malignant): {(y==0).sum()} 筆')
+print(f'類別 1 (benign):    {(y==1).sum()} 筆')
+
+X_tr, X_te, y_tr, y_te = train_test_split(
+    X, y, test_size=0.2, random_state=42)
+
+# 標準化（SVM 對尺度敏感）
+scaler = StandardScaler()
+X_tr_s = scaler.fit_transform(X_tr)
+X_te_s  = scaler.transform(X_te)
+
+# 比較不同 kernel
+for kernel in ['linear', 'rbf', 'poly']:
+    model = SVC(kernel=kernel, random_state=42)
+    model.fit(X_tr_s, y_tr)
+    acc = model.score(X_te_s, y_te)
+    print(f'kernel={kernel:6s}  準確率={acc:.4f}')
+
+# 最佳 RBF 報告
+model = SVC(kernel='rbf', random_state=42)
+model.fit(X_tr_s, y_tr)
+y_pred = model.predict(X_te_s)
+print('\\n=== 分類報告 (RBF kernel) ===')
+print(classification_report(y_te, y_pred,
+      target_names=bc.target_names))
+`
+      },
+    ]
+  },
+  {
+    sec: 'galSecBridge',
+    cards: [
+      {
+        icon: '📡',
+        title: '接收 HuskyLens 資料 / Receive HuskyLens / Nhận dữ liệu',
+        desc: '持續接收本地程式推來的 HuskyLens 格式資料並即時印出',
+        tag: 'tag-bridge', tagLabel: 'Bridge', mode: 'python',
+        data: `# ★ 使用前：執行 blockpy_bridge.py 並啟動橋接器
+# ★ 再執行  example_local_program.py (選模式 1)
+_bridge_url = 'http://localhost:8765'
+
+from pyodide.http import pyfetch as _pf
+import asyncio as _aio
+
+print('📡 開始接收資料... (讀 15 筆)')
+empty_count = 0
+received_count = 0
+for _ in range(40):
+    r = await _pf(_bridge_url + '/pull')
+    d = await r.json()
+    if not d['empty']:
+        received_count += 1
+        print(f'[{received_count:02d}] {d["value"]}')
+        empty_count = 0
+        if received_count >= 15:
+            break
+    else:
+        empty_count += 1
+        if empty_count == 1:
+            print('（等待資料...）')
+    await _aio.sleep(0.5)
+print(f'完成！共收到 {received_count} 筆')
+`
+      },
+      {
+        icon: '💬',
+        title: '雙向對話 / Bidirectional Chat / Giao tiếp 2 chiều',
+        desc: 'BlockPy 傳訊息給本地程式，本地程式回覆，雙向溝通',
+        tag: 'tag-bridge', tagLabel: 'Bridge', mode: 'python',
+        data: `# ★ 使用前：執行 blockpy_bridge.py 並啟動橋接器
+# ★ 再執行  example_local_program.py (選模式 3)
+_bridge_url = 'http://localhost:8765'
+
+from pyodide.http import pyfetch as _pf
+import asyncio as _aio, json as _j
+
+async def bsend(val):
+    r = await _pf(_bridge_url + '/send', method='POST',
+        headers={'Content-Type': 'application/json'},
+        body=_j.dumps({'value': str(val)}))
+    return await r.json()
+
+async def brecv_wait(timeout=8):
+    t0 = _aio.get_event_loop().time()
+    while True:
+        r = await _pf(_bridge_url + '/pull')
+        d = await r.json()
+        if not d['empty']:
+            return d['value']
+        if _aio.get_event_loop().time() - t0 > timeout:
+            return None
+        await _aio.sleep(0.3)
+
+print('💬 雙向對話測試 (需先啟動 example_local_program 模式3)')
+msgs = ['你好！', 'BlockPy 問：今天幾度？', '謝謝你的回答！']
+for i, msg in enumerate(msgs, 1):
+    print(f'[{i}] 📤 傳送: {msg}')
+    await bsend(msg)
+    reply = await brecv_wait(timeout=10)
+    if reply:
+        print(f'[{i}] 📥 收到: {reply}')
+    else:
+        print(f'[{i}] ⏱ 超時，沒有收到回覆')
+    await _aio.sleep(0.3)
+print('對話結束！')
+`
+      },
+      {
+        icon: '📊',
+        title: '感測器資料繪圖 / Sensor Chart / Biểu đồ cảm biến',
+        desc: '接收 JSON 感測器資料，解析溫度後在畫布上繪製折線圖',
+        tag: 'tag-bridge', tagLabel: 'Bridge', mode: 'python',
+        data: `# ★ 使用前：執行 blockpy_bridge.py 並啟動橋接器
+# ★ 再執行  example_local_program.py (選模式 2)
+_bridge_url = 'http://localhost:8765'
+
+from pyodide.http import pyfetch as _pf
+import asyncio as _aio, json as _j, js
+
+c = js.document.getElementById('drawCanvas')
+ctx = c.getContext('2d')
+W, H = c.width, c.height
+
+def draw_chart(temps):
+    ctx.clearRect(0, 0, W, H)
+    # 背景
+    ctx.fillStyle = '#0f172a'
+    ctx.fillRect(0, 0, W, H)
+    # 格線
+    ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 1
+    for gx in range(0, W, 40):
+        ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke()
+    for gy in range(0, H, 40):
+        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke()
+    if len(temps) < 2: return
+    # 折線
+    ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2
+    ctx.beginPath()
+    for i, t_ in enumerate(temps):
+        x = int(i * (W - 40) / max(len(temps)-1, 1)) + 20
+        y = int(H - (t_ - 20) / 15 * H * 0.7 - H * 0.1)
+        if i == 0: ctx.moveTo(x, y)
+        else: ctx.lineTo(x, y)
+    ctx.stroke()
+    # 標題
+    ctx.fillStyle = '#f8fafc'
+    ctx.font = '13px Sora,sans-serif'
+    ctx.fillText(f'溫度折線圖  最新:{temps[-1]:.1f}°C  (n={len(temps)})', 12, 22)
+
+temps = []
+print('📊 接收感測器資料並繪製折線圖 (接收 25 筆)...')
+for i in range(80):
+    r = await _pf(_bridge_url + '/pull')
+    d = await r.json()
+    if d['empty']:
+        await _aio.sleep(0.3); continue
+    try:
+        s = _j.loads(d['value'])
+        temps.append(s['temp'])
+        if len(temps) > 40: temps.pop(0)
+        draw_chart(temps)
+        print(f'[{len(temps):02d}] temp={s["temp"]:.2f}°C  humid={s["humid"]:.0f}%')
+        if len(temps) >= 25: break
+    except Exception as e:
+        print('解析錯誤:', e)
+    await _aio.sleep(0.2)
+print('完成！')
+`
+      }
+    ]
+  }
+];
+
+// ── Render Gallery ────────────────────────────────────────────────
+function renderGallery(){
+  const t=T();
+  const container=document.getElementById('galleryContent');
+  container.innerHTML='';
+  GALLERY.forEach(sec=>{
+    const secEl=document.createElement('div');
+    secEl.className='gallery-section';
+    secEl.innerHTML=`<h3>${t[sec.sec]||sec.sec}</h3>`;
+    const grid=document.createElement('div');
+    grid.className='gallery-grid';
+    sec.cards.forEach((card,idx)=>{
+      const el=document.createElement('div');
+      el.className='gallery-card';
+      el.innerHTML=`
+        <span class="card-icon">${card.icon}</span>
+        <div class="card-title">${card.title.split(' / ')[currentLang==='zh'?0:currentLang==='vi'?2:1]||card.title.split(' / ')[0]}</div>
+        <div class="card-desc">${card.desc}</div>
+        <span class="card-tag ${card.tag}">${card.tagLabel}</span>
+        <span class="card-mode">${card.mode==='blocks'?'⬡ Blocks':'{ } Python'}</span>`;
+      el.addEventListener('click',()=>loadGalleryItem(card));
+      grid.appendChild(el);
+    });
+    secEl.appendChild(grid);
+    container.appendChild(secEl);
+  });
+}
+
+function loadGalleryItem(card){
+  if(card.mode==='blocks'){
+    const xml=Blockly.utils.xml.textToDom(card.data);
+    workspace.clear();
+    Blockly.Xml.domToWorkspace(xml,workspace);
+    switchMode('block');
+  } else {
+    document.getElementById('codeEditor').value=card.data;
+    switchMode('code');
+  }
+  switchTab('output');
+  appendOutput(`📂 已載入範例：${card.title.split(' / ')[0]}`, 'line-info');
+  appendOutput(`▶ 按「執行」或 Ctrl+Enter 開始`, 'line-info');
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  S4 ── BLOCKLY WORKSPACE INIT
+// ═══════════════════════════════════════════════════════════════════════
+const DARK_THEME=Blockly.Theme.defineTheme('darkTheme',{
+  base:Blockly.Themes.Classic,
+  componentStyles:{
+    workspaceBackgroundColour:'#0d1117',toolboxBackgroundColour:'#161b22',
+    toolboxForegroundColour:'#e6edf3',flyoutBackgroundColour:'#161b22',
+    flyoutForegroundColour:'#c9d1d9',flyoutOpacity:1,scrollbarColour:'#30363d',
+  }
+});
+
+defineCustomBlocks();
+definePythonGenerators();
+defineBridgeBlocks();
+defineBridgeGenerators();
+
+let workspace=Blockly.inject('blocklyDiv',{
+  toolbox:buildToolboxXml(), theme:DARK_THEME,
+  grid:{spacing:24,length:3,colour:'#1c2128',snap:true},
+  zoom:{controls:true,wheel:true,startScale:.9,maxScale:3,minScale:.3},
+  trashcan:true,sounds:false,
+});
+
+const START_XML=`<xml>
+  <block type="draw_set_bg" x="40" y="40"><field name="COLOR">#0f3460</field>
+  <next><block type="draw_set_stroke"><field name="COLOR">#e94560</field><field name="WIDTH">3</field>
+  <next><block type="draw_set_fill"><field name="COLOR">#e94560</field>
+  <next><block type="draw_circle"><field name="CX">240</field><field name="CY">150</field><field name="R">80</field><field name="FILL">TRUE</field>
+  <next><block type="draw_set_fill"><field name="COLOR">#ffffff</field>
+  <next><block type="draw_text"><field name="TEXT">BlockPy 🚀</field><field name="X">165</field><field name="Y">158</field><field name="SIZE">22</field><field name="COLOR">#ffffff</field>
+  </block></next></block></next></block></next></block></next></block></next></block>
+  </xml>`;
+
+Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(START_XML),workspace);
+workspace.addChangeListener(()=>{ syncBlocksToCode(); });
+
+// 手動編輯中欄時標記，停止覆蓋
+document.getElementById('codeEditor').addEventListener('input', ()=>{
+  isCodeManuallyEdited = true;
+  document.getElementById('codeEditHint').style.display = 'inline';
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+//  S5 ── LANGUAGE SWITCHING
+// ═══════════════════════════════════════════════════════════════════════
+const savedBlocklyMsg={};
+let blocklyMsgLoaded={zh:true,vi:false,en:false};
+savedBlocklyMsg['zh']={...Blockly.Msg};
+
+function loadScript(url){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=url;s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
+
+async function ensureBlocklyMsg(lang){
+  if(blocklyMsgLoaded[lang])return;
+  await loadScript({en:'https://unpkg.com/blockly@10.4.3/msg/en.js',vi:'https://unpkg.com/blockly@10.4.3/msg/vi.js'}[lang]);
+  savedBlocklyMsg[lang]={...Blockly.Msg};
+  blocklyMsgLoaded[lang]=true;
+}
+
+async function switchLang(lang){
+  if(lang===currentLang)return;
+  document.getElementById('langOverlayText').textContent=LANG_TABLE[lang]?.langOverlay||'…';
+  document.getElementById('langOverlay').classList.add('visible');
+  try{
+    await ensureBlocklyMsg(lang);
+    const xmlText=Blockly.Xml.domToText(Blockly.Xml.workspaceToDom(workspace));
+    currentLang=lang;
+    Object.assign(Blockly.Msg,savedBlocklyMsg[lang]);
+    defineCustomBlocks();
+    defineBridgeBlocks();
+    defineBridgeGenerators();
+    workspace.updateToolbox(buildToolboxXml());
+    workspace.clear();
+    Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(xmlText),workspace);
+    applyUiLang();
+    renderGallery();
+    ['Zh','Vi','En'].forEach(l=>{
+      const btn=document.getElementById(`langBtn${l}`);
+      btn.classList.toggle('active',l.toLowerCase()===lang);
+    });
+  }catch(err){console.error(err);}
+  finally{document.getElementById('langOverlay').classList.remove('visible');}
+}
+
+function applyUiLang(){
+  const t=T();
+  document.querySelectorAll('[data-i18n]').forEach(el=>{const k=el.getAttribute('data-i18n');if(t[k]!==undefined)el.textContent=t[k];});
+  document.querySelectorAll('[data-i18n-content]').forEach(el=>{const k=el.getAttribute('data-i18n-content');if(t[k]!==undefined)el.textContent=t[k];});
+  // panelLabel removed (three-pane layout)
+  document.getElementById('codeEditor').placeholder=t.codeEditorHint;
+  document.documentElement.lang=currentLang==='zh'?'zh-TW':currentLang;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  S6 ── MODE / TAB
+// ═══════════════════════════════════════════════════════════════════════
+// ── 三欄模式：Python 面板永遠顯示，不需要切換 ──
+let currentMode = 'code';  // 三欄佈局下固定為 code
+let isCodeManuallyEdited = false;
+
+function syncBlocksToCode(){
+  if(!isCodeManuallyEdited){
+    document.getElementById('codeEditor').value = Blockly.Python.workspaceToCode(workspace);
+  }
+}
+
+// 向下相容（Gallery 仍會呼叫 switchMode）
+function switchMode(mode){
+  if(mode === 'code'){
+    // 從 Gallery 載入 Python 範例時，直接填入中欄並標記為手動編輯
+    isCodeManuallyEdited = true;
+    document.getElementById('codeEditHint').style.display = 'inline';
+  } else {
+    isCodeManuallyEdited = false;
+    document.getElementById('codeEditHint').style.display = 'none';
+    syncBlocksToCode();
+  }
+  Blockly.svgResize(workspace);
+}
+function switchTab(tab){
+  ['output','canvas','gallery','var','bridge'].forEach(t=>{
+    document.getElementById(`${t}Tab`).classList.toggle('active',t===tab);
+    document.getElementById(`tab-${t}`).classList.toggle('active',t===tab);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  S7 ── PYODIDE INIT  (loads numpy + scikit-learn)
+// ═══════════════════════════════════════════════════════════════════════
+let pyodide=null, pyodideReady=false;
+
+async function initPyodide(){
+  const t=T();
+  try{
+    appendOutput(t.initMsg1,'line-info');
+    pyodide=await loadPyodide({
+      indexURL:'https://cdn.jsdelivr.net/pyodide/v0.25.1/full/',
+      stdout:s=>appendOutput(s,'line-out'),
+      stderr:s=>appendOutput(s,'line-err'),
+    });
+    appendOutput(t.initMsg2,'line-info');
+    await pyodide.loadPackage(['numpy']);
+
+    // ★ Stage 4: 載入 scikit-learn
+    document.getElementById('engineStatus').className='loading-sklearn';
+    document.getElementById('engineLabel').textContent=T().engineLoadingSklearn;
+    appendOutput(T().initMsg3,'line-info');
+    await pyodide.loadPackage(['scikit-learn']);
+
+    window._bp_out=s=>appendOutput(s,'line-out');
+    window._bp_err=s=>appendOutput(s,'line-err');
+    await pyodide.runPythonAsync(`
+_bridge_url = 'http://127.0.0.1:8765'
+import sys,io
+class _O(io.TextIOBase):
+    def write(self,s):
+        from js import _bp_out; _bp_out(s); return len(s)
+class _E(io.TextIOBase):
+    def write(self,s):
+        from js import _bp_err; _bp_err(s); return len(s)
+sys.stdout=_O(); sys.stderr=_E()
+`);
+    await pyodide.runPythonAsync(`
+# ── screen helper ── 讓積木產生的 screen.* 呼叫能直接執行 ──
+import js as _js, math as _math
+
+class _Screen:
+    def __init__(self):
+        self._stroke = '#000000'
+        self._fill   = '#ff0000'
+        self._lw     = 2
+
+    def _ctx(self):
+        return _js.document.getElementById('drawCanvas').getContext('2d')
+
+    def clear(self):
+        c = _js.document.getElementById('drawCanvas')
+        self._ctx().clearRect(0, 0, c.width, c.height)
+
+    def set_bg(self, color):
+        c = _js.document.getElementById('drawCanvas')
+        ctx = self._ctx()
+        ctx.fillStyle = color
+        ctx.fillRect(0, 0, c.width, c.height)
+
+    def set_stroke(self, color, width=2):
+        self._stroke = color
+        self._lw = width
+
+    def set_fill(self, color):
+        self._fill = color
+
+    def draw_line(self, x1, y1, x2, y2):
+        ctx = self._ctx()
+        ctx.strokeStyle = self._stroke
+        ctx.lineWidth = self._lw
+        ctx.beginPath()
+        ctx.moveTo(x1, y1)
+        ctx.lineTo(x2, y2)
+        ctx.stroke()
+
+    def draw_rect(self, x, y, w, h, fill=True):
+        ctx = self._ctx()
+        ctx.beginPath()
+        ctx.rect(x, y, w, h)
+        if fill:
+            ctx.fillStyle = self._fill
+            ctx.fill()
+        ctx.strokeStyle = self._stroke
+        ctx.lineWidth = self._lw
+        ctx.stroke()
+
+    def draw_circle(self, cx, cy, r, fill=True):
+        ctx = self._ctx()
+        ctx.beginPath()
+        ctx.arc(cx, cy, r, 0, _math.pi * 2)
+        if fill:
+            ctx.fillStyle = self._fill
+            ctx.fill()
+        ctx.strokeStyle = self._stroke
+        ctx.lineWidth = self._lw
+        ctx.stroke()
+
+    def draw_ellipse(self, cx, cy, rx, ry, fill=True):
+        ctx = self._ctx()
+        ctx.beginPath()
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, _math.pi * 2)
+        if fill:
+            ctx.fillStyle = self._fill
+            ctx.fill()
+        ctx.strokeStyle = self._stroke
+        ctx.lineWidth = self._lw
+        ctx.stroke()
+
+    def draw_polygon(self, sides, cx, cy, r, fill=True):
+        ctx = self._ctx()
+        ctx.beginPath()
+        for i in range(sides):
+            a = 2 * _math.pi * i / sides - _math.pi / 2
+            px, py = cx + r * _math.cos(a), cy + r * _math.sin(a)
+            if i == 0: ctx.moveTo(px, py)
+            else: ctx.lineTo(px, py)
+        ctx.closePath()
+        if fill:
+            ctx.fillStyle = self._fill
+            ctx.fill()
+        ctx.strokeStyle = self._stroke
+        ctx.lineWidth = self._lw
+        ctx.stroke()
+
+    def draw_text(self, text, x, y, size=20, color='#333333'):
+        ctx = self._ctx()
+        ctx.font = f'{size}px Sora,sans-serif'
+        ctx.fillStyle = color
+        ctx.fillText(str(text), x, y)
+
+screen = _Screen()
+`);
+    pyodideReady=true;
+    document.getElementById('engineStatus').className='ready';
+    document.getElementById('engineLabel').textContent=T().engineReady;
+    document.getElementById('runBtn').disabled=false;
+    appendOutput(T().initOk,'line-ok');
+    appendOutput(T().initHint1,'line-info');
+    appendOutput(T().initHint2,'line-info');
+  // Bridge banner
+  if (location.protocol === 'file:') {
+    appendOutput('', 'line-info');
+    appendOutput('⚠️  橋接狀態燈提示：', 'line-warn');
+    appendOutput('   從檔案開啟時，某些瀏覽器會限制 fetch 到 localhost', 'line-warn');
+    appendOutput('   建議：執行 blockpy_bridge.py → 點「🌐 開啟工具」按鈕', 'line-warn');
+    appendOutput('   這樣從 http://127.0.0.1:8765 開啟，橋接狀態燈必定正常', 'line-warn');
+    appendOutput('', 'line-info');
+  } else {
+    appendOutput('🔌 橋接積木可用！工具箱 → 🔌 橋接 分類', 'line-info');
+  }
+  }catch(err){
+    document.getElementById('engineStatus').className='error';
+    document.getElementById('engineLabel').textContent=T().engineFail;
+    appendOutput('❌ '+err.message,'line-err');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  S8 ── RUN CODE
+// ═══════════════════════════════════════════════════════════════════════
+async function runCode(){
+  if(!pyodideReady){appendOutput(T().pyNotReady,'line-warn');return;}
+  // 三欄佈局：永遠執行中欄 Python 程式碼（積木變動時已自動同步）
+  const code=document.getElementById('codeEditor').value;
+  if(!code.trim()){appendOutput(T().runWarn,'line-warn');return;}
+  const btn=document.getElementById('runBtn');
+  btn.querySelector('[data-i18n]').textContent='⏳';
+  btn.disabled=true;
+  if(code.includes("getElementById('drawCanvas')") || code.includes("screen.")){ switchTab('canvas'); }
+  appendOutput(T().runStart,'line-info');
+  try{
+    await pyodide.runPythonAsync(code);
+    await updateVarPanel();
+    appendOutput(T().runDone,'line-ok');
+  }catch(err){
+    appendOutput(err.message,'line-err');
+    switchTab('output');
+  }finally{
+    btn.querySelector('[data-i18n]').textContent=T().btnRun;
+    btn.disabled=false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  S9 ── EXPORT  (.py download + canvas PNG download)
+// ═══════════════════════════════════════════════════════════════════════
+function exportPy(){
+  const code=document.getElementById('codeEditor').value;
+  const header=`# Generated by BlockPy × Pyodide (Stage 4)\n# ${new Date().toLocaleString()}\n\n`;
+  const blob=new Blob([header+code],{type:'text/x-python'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`blockpy_${Date.now()}.py`;
+  a.click(); URL.revokeObjectURL(a.href);
+  appendOutput(T().exportPyOk,'line-ok');
+  switchTab('output');
+}
+
+function exportPng(){
+  const canvas=document.getElementById('drawCanvas');
+  // 檢查是否有內容（取左上角像素）
+  const px=canvas.getContext('2d').getImageData(0,0,1,1).data;
+  if(px[3]===0){appendOutput(T().exportPngWarn,'line-warn');switchTab('canvas');return;}
+  const a=document.createElement('a');
+  a.href=canvas.toDataURL('image/png');
+  a.download=`blockpy_canvas_${Date.now()}.png`;
+  a.click();
+  appendOutput(T().exportPngOk,'line-ok');
+  switchTab('output');
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  S10 ── CANVAS / VAR / UTILS
+// ═══════════════════════════════════════════════════════════════════════
+function clearCanvas(){const c=document.getElementById('drawCanvas');c.getContext('2d').clearRect(0,0,c.width,c.height);switchTab('canvas');}
+function resizeCanvas(){const[w,h]=document.getElementById('canvasSizeSelect').value.split(',').map(Number);const c=document.getElementById('drawCanvas');c.width=w;c.height=h;document.getElementById('canvasSizeLabel').textContent=`${w}×${h}`;}
+async function updateVarPanel(){
+  if(!pyodideReady)return;
+  try{
+    const json=await pyodide.runPythonAsync(`
+import json as _j
+_sk={'__name__','__doc__','__package__','__loader__','__spec__','__builtins__','_O','_E','sys','io','_j'}
+def _r(v):
+    try:
+        import numpy as np
+        if isinstance(v,np.ndarray):return f'ndarray {v.shape} {v.dtype}'
+    except:pass
+    try:
+        s=repr(v);return s if len(s)<100 else s[:100]+'…'
+    except:return '?'
+_j.dumps({k:{'val':_r(v),'type':type(v).__name__} for k,v in globals().items() if not k.startswith('_') and k not in _sk and not callable(v)})
+`);
+    const vars=JSON.parse(json);
+    const el=document.getElementById('varContent');
+    el.innerHTML=Object.keys(vars).length
+      ?Object.entries(vars).map(([n,i])=>`<div class="var-row"><span class="var-name">${escHtml(n)}</span><span class="var-type">${escHtml(i.type)}</span><span class="var-val">${escHtml(i.val)}</span></div>`).join('')
+      :`<span style="color:var(--muted);font-size:12px;">${T().noVar}</span>`;
+  }catch{}
+}
+function appendOutput(text,cls='line-out'){const box=document.getElementById('outputBox');const s=document.createElement('span');s.className=cls;s.textContent=text+'\n';box.appendChild(s);box.scrollTop=box.scrollHeight;}
+function clearOutput(){document.getElementById('outputBox').innerHTML='';document.getElementById('varContent').textContent=T().varEmpty;}
+function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// ── 雙分隔線 ──────────────────────────────────────
+// Resizer A：Blockly ↔ Python
+(function(){
+  const rA = document.getElementById('resizerA');
+  const blocklyPane = document.getElementById('blocklyPane');
+  let dragging = false;
+  rA.addEventListener('mousedown', e=>{dragging=true;document.body.style.cursor='col-resize';document.body.style.userSelect='none';e.preventDefault();});
+  document.addEventListener('mousemove', e=>{
+    if(!dragging)return;
+    const mainRect = document.querySelector('main').getBoundingClientRect();
+    const newW = e.clientX - mainRect.left;
+    if(newW > 150 && newW < mainRect.width - 400){
+      blocklyPane.style.flex='none';
+      blocklyPane.style.width = newW+'px';
+      Blockly.svgResize(workspace);
+    }
+  });
+  document.addEventListener('mouseup',()=>{if(dragging){dragging=false;document.body.style.cursor='';document.body.style.userSelect='';}});
+})();
+
+// Resizer B：Python ↔ 右欄
+const resizer=document.getElementById('resizer'), rightPane=document.getElementById('rightPane');
+let isResizing=false;
+resizer.addEventListener('mousedown',()=>{isResizing=true;document.body.style.cursor='col-resize';document.body.style.userSelect='none';});
+document.addEventListener('mousemove',e=>{if(!isResizing)return;const w=document.querySelector('main').getBoundingClientRect().right-e.clientX;if(w>220&&w<700)rightPane.style.width=w+'px';});
+document.addEventListener('mouseup',()=>{if(isResizing){isResizing=false;document.body.style.cursor='';document.body.style.userSelect='';}});
+document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();if(!document.getElementById('runBtn').disabled)runCode();}});
+window.addEventListener('resize',()=>Blockly.svgResize(workspace));
+
+
+// ═══════════════════════════════════════════════════════════════════════
+//  BRIDGE ── Status polling & popup
+// ═══════════════════════════════════════════════════════════════════════
+var _bridge_url_js = 'http://127.0.0.1:8765';
+var _bridge_connected = false;
+var _bridge_url_js_locked = false; // set true when user manually changes URL
+
+// ── URL setter ─────────────────────────────────────────────────────────
+function setBridgeUrl(url) {
+  _bridge_url_js_locked = true;
+  _bridge_url_js = url.trim();
+  document.getElementById('bUrlInput').value = _bridge_url_js;
+  if (window.pyodide) {
+    try { window.pyodide.runPython('_bridge_url = "' + _bridge_url_js + '"'); } catch(e) {}
+  }
+  checkBridgeStatus();
+}
+
+// ── Popup toggle ───────────────────────────────────────────────────────
+function toggleBPopup() {
+  document.getElementById('bPopup').classList.toggle('open');
+}
+document.addEventListener('click', function(e) {
+  var bs = document.getElementById('bridgeStatus');
+  if (bs && !bs.contains(e.target)) {
+    document.getElementById('bPopup').classList.remove('open');
+  }
+});
+
+// ── Status check (tries 127.0.0.1 AND localhost) ───────────────────────
+async function checkBridgeStatus() {
+  // If served from the bridge server itself, use relative URL for reliability
+  if (location.protocol === 'http:' && !_bridge_url_js_locked) {
+    var autoUrl = location.protocol + '//' + location.host;
+    if (autoUrl !== _bridge_url_js) {
+      _bridge_url_js = autoUrl;
+      var inp = document.getElementById('bUrlInput');
+      if (inp) inp.value = autoUrl;
+    }
+  }
+  var el   = document.getElementById('bridgeStatus');
+  var lbl  = document.getElementById('bLabel');
+  var stat = document.getElementById('bStats');
+
+  // Build candidate URL list: try current URL, and swap localhost↔127.0.0.1
+  var urls = [_bridge_url_js];
+  if (_bridge_url_js.includes('localhost')) {
+    urls.push(_bridge_url_js.replace('localhost', '127.0.0.1'));
+  } else if (_bridge_url_js.includes('127.0.0.1')) {
+    urls.push(_bridge_url_js.replace('127.0.0.1', 'localhost'));
+  }
+
+  var lastErr = '';
+  for (var i = 0; i < urls.length; i++) {
+    var url = urls[i];
+    try {
+      var ctrl = new AbortController();
+      var timer = setTimeout(function() { ctrl.abort(); }, 2000);
+      var r = await fetch(url + '/status', { signal: ctrl.signal });
+      clearTimeout(timer);
+      var d = await r.json();
+
+      // ✅ Success — update URL to the one that worked
+      _bridge_url_js = url;
+      document.getElementById('bUrlInput').value = url;
+      if (window.pyodide) {
+        try { window.pyodide.runPython('_bridge_url = "' + url + '"'); } catch(e) {}
+      }
+
+      el.setAttribute('class', 'bs-ok');
+      lbl.textContent = '🔌 橋接 ✓';
+      stat.innerHTML =
+        '<b>URL:</b> ' + url + '<br>' +
+        '佇列 ↑' + d.q_to_browser + ' ↓' + d.q_to_local + '<br>' +
+        'push:' + d.n_push + '  pull:' + d.n_pull +
+        '  send:' + d.n_send + '  recv:' + d.n_recv;
+
+      if (!_bridge_connected) {
+        _bridge_connected = true;
+        appendBridgeLog('🔌 橋接器連線成功！' + url, 'bl-recv');
+      }
+      return;
+
+    } catch(e) {
+      lastErr = String(e);
+      clearTimeout && clearTimeout();
+    }
+  }
+
+  // ❌ All URLs failed
+  _bridge_connected = false;
+  el.setAttribute('class', 'bs-off');
+  lbl.textContent = '🔌 橋接 ─';
+  stat.innerHTML =
+    '未連線 — 請先執行 <b>blockpy_bridge.py</b><br>' +
+    '並點「▶ 啟動橋接器」<br><br>' +
+    '<span style="color:#888;font-size:9px;">' + lastErr.slice(0, 80) + '</span>';
+}
+
+function startBridgePoll() {
+  // Poll fast at first (every 1s), then slow down to every 3s after connect
+  checkBridgeStatus();
+  var fastPoll = setInterval(function() {
+    checkBridgeStatus();
+    if (_bridge_connected) {
+      clearInterval(fastPoll);
+      setInterval(checkBridgeStatus, 3000); // slow poll after connected
+    }
+  }, 1000);
+}
+
+function appendBridgeLog(text, cls) {
+  cls = cls || 'bl-info';
+  var box = document.getElementById('bridgeLog');
+  var s = document.createElement('span');
+  s.className = cls;
+  var ts = new Date().toTimeString().slice(0, 8);
+  s.textContent = '[' + ts + '] ' + text + '\n';
+  box.appendChild(s);
+  box.scrollTop = box.scrollHeight;
+}
+
+// ── Startup ──────────────────────────────────────────────────────
+applyUiLang();
+renderGallery();
+initPyodide();
+startBridgePoll();
+</script>
+</body>
+</html>

@@ -80,10 +80,10 @@ That should rebuild the files into `dist`. You can then open `tests/index.html` 
 
 ## 授權聲明 / License Attribution
 
-本專案 Fork 自 [BlockPy](https://github.com/blockpy-edu/blockpy-web)，
+本專案 Fork 自 [BlockPy](https://github.com/blockpy-edu/blockpy)，
 原始專案採用 Apache License 2.0 授權。
 
-This project is a derivative of [BlockPy](https://github.com/blockpy-edu/blockpy-web)
+This project is a derivative of [BlockPy](https://github.com/blockpy-edu/blockpy)
 by blockpy-edu, licensed under Apache 2.0.
 
 主要修改內容 / Modifications:

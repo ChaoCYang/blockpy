@@ -1757,7 +1757,15 @@ _j.dumps({k:{'val':_r(v),'type':type(v).__name__} for k,v in globals().items() i
       :`<span style="color:var(--muted);font-size:12px;">${T().noVar}</span>`;
   }catch{}
 }
-function appendOutput(text,cls='line-out'){const box=document.getElementById('outputBox');const s=document.createElement('span');s.className=cls;s.textContent=text+'\n';box.appendChild(s);box.scrollTop=box.scrollHeight;}
+function appendOutput(text, cls='line-out'){
+  const box = document.getElementById('outputBox');
+  const s = document.createElement('span');
+  s.className = cls;
+  // 去掉 Python print 自動加的結尾 \n，讓 display:block 自然換行
+  s.textContent = text.endsWith('\n') ? text.slice(0, -1) : text;
+  box.appendChild(s);
+  box.scrollTop = box.scrollHeight;
+}
 function clearOutput(){document.getElementById('outputBox').innerHTML='';document.getElementById('varContent').textContent=T().varEmpty;}
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 

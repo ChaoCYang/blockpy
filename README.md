@@ -77,3 +77,21 @@ $> npm run dev
 ```
 
 That should rebuild the files into `dist`. You can then open `tests/index.html` and explore.
+
+## 授權聲明 / License Attribution
+
+本專案 Fork 自 [BlockPy](https://github.com/blockpy-edu/blockpy-web)，
+原始專案採用 Apache License 2.0 授權。
+
+This project is a derivative of [BlockPy](https://github.com/blockpy-edu/blockpy-web)
+by blockpy-edu, licensed under Apache 2.0.
+
+主要修改內容 / Modifications:
+- 以 Pyodide 取代 Skulpt 作為 Python 執行環境  
+  (Replaced Skulpt with Pyodide as the Python runtime)
+- 新增 NumPy、scikit-learn 積木分類  
+  (Added NumPy and scikit-learn block categories)
+- 新增本地橋接系統（blockpy_bridge.py）  
+  (Added local bridge system for hardware integration)
+- 重新設計 UI 介面與中文支援  
+  (Redesigned UI with Traditional Chinese support)

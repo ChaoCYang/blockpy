@@ -78,8 +78,32 @@ main{display:flex;flex:1;overflow:hidden;}
 #blocklyDiv{flex:1;display:block;}
 
 /* 中欄：Python 程式碼（永遠顯示） */
-#codePane{width:320px;min-width:160px;display:flex;flex-direction:column;border-left:1px solid var(--border);border-right:1px solid var(--border);overflow:hidden;flex-shrink:0;}
+#codePane{width:320px;min-width:160px;display:flex;flex-direction:column;border-left:1px solid var(--border);border-right:1px solid var(--border);overflow:hidden;flex-shrink:0;position:relative;}
 #codeEditor{flex:1;background:#090d12;color:#a5d6ff;font-family:'JetBrains Mono',monospace;font-size:12.5px;border:none;outline:none;resize:none;padding:14px 16px;line-height:1.7;tab-size:4;}
+/* ── 浮動視窗 ── */
+#codePane.popped-out{position:fixed;z-index:9000;border:1.5px solid var(--accent);border-radius:10px;box-shadow:0 12px 48px rgba(0,0,0,.6);overflow:hidden;display:flex;flex-direction:column;min-width:280px;min-height:180px;background:var(--bg);will-change:width,height,left,top;}
+#codePane.popped-out #codeEditor{overflow:auto;white-space:pre;word-break:normal;}
+#codePane.popped-out .pane-label{cursor:move;user-select:none;background:#1a1f2e;border-bottom:1px solid var(--accent);}
+/* 8方向縮放控制點 */
+.pr{position:absolute;z-index:10;display:none;}
+#codePane.popped-out .pr{display:block;}
+.pr-n{top:-4px;left:12px;right:12px;height:8px;cursor:n-resize;}
+.pr-s{bottom:-4px;left:12px;right:12px;height:8px;cursor:s-resize;}
+.pr-w{left:-4px;top:12px;bottom:12px;width:8px;cursor:w-resize;}
+.pr-e{right:-4px;top:12px;bottom:12px;width:8px;cursor:e-resize;}
+.pr-nw{top:-4px;left:-4px;width:14px;height:14px;cursor:nw-resize;}
+.pr-ne{top:-4px;right:-4px;width:14px;height:14px;cursor:ne-resize;}
+.pr-sw{bottom:-4px;left:-4px;width:14px;height:14px;cursor:sw-resize;}
+.pr-se{bottom:-4px;right:-4px;width:14px;height:14px;cursor:se-resize;}
+.pr-se::after{content:'';position:absolute;right:4px;bottom:4px;width:6px;height:6px;border-right:2px solid var(--accent);border-bottom:2px solid var(--accent);opacity:.7;}
+/* 佔位符 */
+#codePanePlaceholder{width:320px;min-width:160px;flex-shrink:0;border-left:1px dashed var(--border);border-right:1px dashed var(--border);background:repeating-linear-gradient(45deg,transparent,transparent 8px,rgba(48,54,61,.25) 8px,rgba(48,54,61,.25) 9px);display:none;align-items:center;justify-content:center;flex-direction:column;gap:6px;}
+#codePanePlaceholder.show{display:flex;}
+#codePanePlaceholder span{font-size:11px;color:var(--muted);opacity:.55;}
+/* 彈出按鈕 */
+.popout-btn{width:22px;height:22px;border-radius:5px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0;line-height:1;}
+.popout-btn:hover{border-color:var(--accent);color:var(--accent);}
+#codePane.popped-out .popout-btn{transform:rotate(180deg);}
 
 .pane-label{font-size:10px;font-weight:600;letter-spacing:.8px;color:var(--muted);padding:5px 12px;background:var(--surface);border-bottom:1px solid var(--border);text-transform:uppercase;flex-shrink:0;display:flex;align-items:center;gap:6px;}
 .dot2{width:5px;height:5px;border-radius:50%;flex-shrink:0;}
@@ -194,7 +218,6 @@ main{display:flex;flex:1;overflow:hidden;}
 </head>
 <body>
 
-<!-- file:// warning banner -->
 <div id="fileBanner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:998;
   background:linear-gradient(135deg,#78350f,#92400e);
   border-top:2px solid #f59e0b;
@@ -252,7 +275,6 @@ main{display:flex;flex:1;overflow:hidden;}
 </header>
 
 <main>
-  <!-- 左欄：Blockly 積木 -->
   <div id="blocklyPane">
     <div class="pane-label">
       <span class="dot2" style="background:var(--accent)"></span>
@@ -261,22 +283,34 @@ main{display:flex;flex:1;overflow:hidden;}
     <div id="blocklyDiv"></div>
   </div>
 
-  <!-- 可拖曳分隔線 A（Blockly ↔ Python） -->
   <div class="resizer" id="resizerA"></div>
 
-  <!-- 中欄：Python 程式碼（永遠可見，與積木同步） -->
   <div id="codePane">
-    <div class="pane-label" style="justify-content:space-between;">
+    <div class="pane-label" id="codePaneBar" style="justify-content:space-between;">
       <span style="display:flex;align-items:center;gap:6px;">
         <span class="dot2" style="background:var(--green)"></span>
         <span>{ } Python</span>
       </span>
-      <span id="codeEditHint" style="font-size:9px;color:var(--warn);display:none;">✏️ 手動編輯中</span>
+      <span style="display:flex;align-items:center;gap:5px;">
+        <span id="codeEditHint" style="font-size:9px;color:var(--warn);display:none;">✏️ 手動編輯中</span>
+        <button class="popout-btn" id="popoutBtn" onclick="toggleCodePopout()" title="獨立視窗 / 收回">⤢</button>
+      </span>
     </div>
     <textarea id="codeEditor" spellcheck="false"></textarea>
+    <div class="pr pr-n"  data-dir="n"></div>
+    <div class="pr pr-s"  data-dir="s"></div>
+    <div class="pr pr-w"  data-dir="w"></div>
+    <div class="pr pr-e"  data-dir="e"></div>
+    <div class="pr pr-nw" data-dir="nw"></div>
+    <div class="pr pr-ne" data-dir="ne"></div>
+    <div class="pr pr-sw" data-dir="sw"></div>
+    <div class="pr pr-se" data-dir="se"></div>
+  </div>
+  <div id="codePanePlaceholder">
+    <span>{ } Python</span>
+    <span style="font-size:10px;">已移至獨立視窗</span>
   </div>
 
-  <!-- 可拖曳分隔線 B（Python ↔ 右欄） -->
   <div class="resizer" id="resizer"></div>
 
   <div id="rightPane">
@@ -288,13 +322,11 @@ main{display:flex;flex:1;overflow:hidden;}
       <button class="tab-btn"        id="tab-bridge"  onclick="switchTab('bridge')">🔌 <span data-i18n="tabBridge"></span></button>
     </div>
 
-    <!-- Output -->
     <div id="outputTab" class="active">
       <div id="outputBox"><span class="line-info">Pyodide init…</span>
 </div>
     </div>
 
-    <!-- Canvas -->
     <div id="canvasTab">
       <div class="canvas-toolbar">
         <label data-i18n="canvasSize"></label>
@@ -308,12 +340,10 @@ main{display:flex;flex:1;overflow:hidden;}
       <canvas id="drawCanvas" width="480" height="360"></canvas>
     </div>
 
-    <!-- Gallery -->
     <div id="galleryTab">
       <div id="galleryContent"></div>
     </div>
 
-    <!-- Bridge Log -->
     <div id="bridgeTab">
       <div id="bridgeLog"><span class="bl-info">等待橋接器連線…
 請先執行 blockpy_bridge.py 並啟動橋接器
@@ -322,7 +352,6 @@ main{display:flex;flex:1;overflow:hidden;}
 </span></div>
     </div>
 
-    <!-- Variables -->
     <div id="varTab">
       <div id="varBox">
         <div id="varContent" style="color:var(--muted);font-size:12px;padding:8px 0;" data-i18n-content="varEmpty"></div>
@@ -356,6 +385,13 @@ zh:{
   catDraw:'🎨 繪圖', catPrint:'🐍 輸出', catVar:'📦 變數', catMath:'🔢 數學',
   catLoop:'🔁 迴圈', catLogic:'🔀 邏輯', catFn:'⚙️ 函式', catNumpy:'🔬 NumPy',
   catSklearn:'🤖 scikit-learn',
+  catVis:'📊 視覺化',
+  blkVisBar:'📊 繪製長條圖 資料陣列',
+  blkVisHeat:'🌡️ 繪製熱力圖 二維矩陣',
+  blkVisScatter:'✨ 繪製散點圖 特徵(X)', blkVisScatterY:'標籤(y)',
+  blkVisHist:'📊 繪製直方圖 (分布)',
+  blkVisReg:'🎯 迴歸評估圖 真實值', blkVisRegPred:'預測值',
+  blkVisLine:'📈 即時折線圖 資料',
   secCanvas:'── 畫布設定 ──', secPen:'── 畫筆設定 ──', secShape:'── 形狀 ──', secText:'── 文字 ──',
   secSkData:'── 資料集 ──', secSkModel:'── 建立模型 ──', secSkTrain:'── 訓練與評估 ──',
   // draw blocks
@@ -415,6 +451,10 @@ vi:{
   catDraw:'🎨 Vẽ Hình', catPrint:'🐍 Xuất dữ liệu', catVar:'📦 Biến số', catMath:'🔢 Toán học',
   catLoop:'🔁 Vòng lặp', catLogic:'🔀 Điều kiện', catFn:'⚙️ Hàm số', catNumpy:'🔬 NumPy',
   catSklearn:'🤖 scikit-learn',
+  catVis:'📊 Trực quan hoá',
+  blkVisBar:'📊 Vẽ biểu đồ cột mảng',
+  blkVisHeat:'🌡️ Vẽ bản đồ nhiệt ma trận',
+  blkVisScatter:'✨ Vẽ biểu đồ phân tán X', blkVisScatterY:'nhãn y',
   secCanvas:'── Thiết lập khung ──', secPen:'── Thiết lập nét vẽ ──', secShape:'── Hình dạng ──', secText:'── Văn bản ──',
   secSkData:'── Bộ dữ liệu ──', secSkModel:'── Tạo mô hình ──', secSkTrain:'── Huấn luyện ──',
   blkClear:'🗑️ Xóa khung', blkBg:'🖼️ Màu nền', blkStroke:'✏️ Nét vẽ Màu',
@@ -470,6 +510,10 @@ en:{
   catDraw:'🎨 Drawing', catPrint:'🐍 Output', catVar:'📦 Variables', catMath:'🔢 Math',
   catLoop:'🔁 Loops', catLogic:'🔀 Logic', catFn:'⚙️ Functions', catNumpy:'🔬 NumPy',
   catSklearn:'🤖 scikit-learn',
+  catVis:'📊 Visualize',
+  blkVisBar:'📊 Bar Chart array',
+  blkVisHeat:'🌡️ Heatmap matrix',
+  blkVisScatter:'✨ Scatter Plot features(X)', blkVisScatterY:'labels(y)',
   secCanvas:'── Canvas Setup ──', secPen:'── Pen Setup ──', secShape:'── Shapes ──', secText:'── Text ──',
   secSkData:'── Datasets ──', secSkModel:'── Create Model ──', secSkTrain:'── Train & Evaluate ──',
   blkClear:'🗑️ Clear Canvas', blkBg:'🖼️ Background Color', blkStroke:'✏️ Stroke Color',
@@ -525,7 +569,8 @@ function defineCustomBlocks(){
   Blockly.Blocks['draw_ellipse']={init(){this.appendDummyInput().appendField(t.blkEllipse).appendField(new Blockly.FieldNumber(150,0),'CX').appendField(',').appendField(new Blockly.FieldNumber(150,0),'CY').appendField(t.blkEllipseRx).appendField(new Blockly.FieldNumber(80,1),'RX').appendField(t.blkEllipseRy).appendField(new Blockly.FieldNumber(50,1),'RY').appendField(t.blkEllipseFill).appendField(new Blockly.FieldCheckbox('TRUE'),'FILL');this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#E67E22');this.setTooltip(t.tipEllipse);}};
   Blockly.Blocks['draw_polygon']={init(){this.appendDummyInput().appendField(t.blkPoly).appendField(new Blockly.FieldNumber(6,3,20,1),'SIDES').appendField(t.blkPolyCenter).appendField(new Blockly.FieldNumber(150,0),'CX').appendField(',').appendField(new Blockly.FieldNumber(150,0),'CY').appendField(t.blkPolyR).appendField(new Blockly.FieldNumber(70,5),'R').appendField(t.blkPolyFill).appendField(new Blockly.FieldCheckbox('TRUE'),'FILL');this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#16A085');this.setTooltip(t.tipPoly);}};
   Blockly.Blocks['draw_text']={init(){this.appendDummyInput().appendField(t.blkDrawText).appendField(new Blockly.FieldTextInput('Hello!'),'TEXT').appendField(t.blkDrawTextAt).appendField(new Blockly.FieldNumber(50,0),'X').appendField(',').appendField(new Blockly.FieldNumber(50,0),'Y').appendField(t.blkDrawTextSize).appendField(new Blockly.FieldNumber(20,6,200,1),'SIZE').appendField(t.blkDrawTextColor).appendField(new Blockly.FieldColour('#333333'),'COLOR');this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#8E44AD');this.setTooltip(t.tipDrawText);}};
-  // NumPy
+  
+  // NumPy (修正回正確的純值積木)
   Blockly.Blocks['numpy_import']={init(){this.appendDummyInput().appendField('import numpy as').appendField(new Blockly.FieldTextInput('np'),'ALIAS');this.setPreviousStatement(true);this.setNextStatement(true);this.setColour('#3498DB');}};
   Blockly.Blocks['numpy_arange']={init(){this.appendDummyInput().appendField('np.arange(').appendField(new Blockly.FieldNumber(0),'START').appendField(',').appendField(new Blockly.FieldNumber(10),'STOP').appendField(',').appendField(new Blockly.FieldNumber(1),'STEP').appendField(')');this.setOutput(true);this.setColour('#3498DB');}};
   Blockly.Blocks['numpy_mean']={init(){this.appendValueInput('ARR').appendField('np.mean(');this.appendDummyInput().appendField(')');this.setInputsInline(true);this.setOutput(true);this.setColour('#3498DB');}};
@@ -639,6 +684,60 @@ function defineCustomBlocks(){
       this.setColour('#1abc9c');this.setTooltip(t.tipSkReport);
     }
   };
+
+  // ── 視覺化巨集積木 ───────────────────────────────────────────────
+  Blockly.Blocks['vis_bar_chart']={
+    init(){
+      this.appendValueInput('ARR').appendField(t.blkVisBar);
+      this.setPreviousStatement(true); this.setNextStatement(true);
+      this.setColour('#e84393');
+      this.setTooltip('將一維陣列資料繪製成長條圖');
+    }
+  };
+  Blockly.Blocks['vis_heatmap']={
+    init(){
+      this.appendValueInput('MAT').appendField(t.blkVisHeat);
+      this.setPreviousStatement(true); this.setNextStatement(true);
+      this.setColour('#e84393');
+      this.setTooltip('將二維陣列（矩陣）繪製成熱力圖');
+    }
+  };
+  Blockly.Blocks['vis_scatter']={
+    init(){
+      this.appendValueInput('X').appendField(t.blkVisScatter);
+      this.appendValueInput('Y').appendField(t.blkVisScatterY);
+      this.setInputsInline(true);
+      this.setPreviousStatement(true); this.setNextStatement(true);
+      this.setColour('#e84393');
+      this.setTooltip('繪製特徵與標籤的散點圖 (取前兩個特徵)');
+    }
+  };
+  Blockly.Blocks['vis_histogram']={
+    init(){
+      this.appendValueInput('ARR').appendField(t.blkVisHist||'📊 繪製直方圖 (分布)');
+      this.setPreviousStatement(true); this.setNextStatement(true);
+      this.setColour('#e84393');
+      this.setTooltip('繪製一維陣列的數值分布直方圖');
+    }
+  };
+  Blockly.Blocks['vis_regression']={
+    init(){
+      this.appendValueInput('Y_TRUE').appendField(t.blkVisReg||'🎯 迴歸評估圖 真實值');
+      this.appendValueInput('Y_PRED').appendField(t.blkVisRegPred||'預測值');
+      this.setInputsInline(true);
+      this.setPreviousStatement(true); this.setNextStatement(true);
+      this.setColour('#e84393');
+      this.setTooltip('繪製迴歸模型的真實值與預測值比較圖');
+    }
+  };
+  Blockly.Blocks['vis_line_chart']={
+    init(){
+      this.appendValueInput('ARR').appendField(t.blkVisLine||'📈 即時折線圖 資料');
+      this.setPreviousStatement(true); this.setNextStatement(true);
+      this.setColour('#e84393');
+      this.setTooltip('繪製數值陣列的即時動態折線圖');
+    }
+  };
 }
 
 // ── Python generators (language-independent) ─────────────────────
@@ -723,7 +822,7 @@ function defineBridgeGenerators() {
   };
 
   fb['bridge_send'] = (b, gen) => {
-    const val = gen.valueToCode(b, "VALUE", gen.Order.NONE) || "''";
+    const val = gen.valueToCode(b, "VALUE", gen.ORDER_NONE) || "''";
     return [
       "from pyodide.http import pyfetch as _pf",
       "import json as _bj",
@@ -829,9 +928,12 @@ function definePythonGenerators(){
 
   // ── NumPy ──────────────────────────────────────────────────────
   fb['numpy_import'] = (b, gen) => `import numpy as ${b.getFieldValue("ALIAS")}\n`;
-  fb['numpy_arange'] = (b, gen) => [`np.arange(${b.getFieldValue("START")}, ${b.getFieldValue("STOP")}, ${b.getFieldValue("STEP")})`, gen.Order.FUNCTION_CALL];
-  fb['numpy_mean']   = (b, gen) => [`np.mean(${gen.valueToCode(b, "ARR", gen.Order.NONE) || "None"})`, gen.Order.FUNCTION_CALL];
-  fb['numpy_sum']    = (b, gen) => [`np.sum(${gen.valueToCode(b, "ARR", gen.Order.NONE) || "None"})`,  gen.Order.FUNCTION_CALL];
+  fb['numpy_arange'] = (b, gen) => {
+    const code = `np.arange(${b.getFieldValue("START")}, ${b.getFieldValue("STOP")}, ${b.getFieldValue("STEP")})`;
+    return [code, gen.ORDER_FUNCTION_CALL]; 
+  };
+  fb['numpy_mean']   = (b, gen) => [`np.mean(${gen.valueToCode(b, "ARR", gen.ORDER_NONE) || "None"})`, gen.ORDER_FUNCTION_CALL];
+  fb['numpy_sum']    = (b, gen) => [`np.sum(${gen.valueToCode(b, "ARR", gen.ORDER_NONE) || "None"})`,  gen.ORDER_FUNCTION_CALL];
 
   // ── scikit-learn ───────────────────────────────────────────────
   fb['sk_load_dataset'] = (b, gen) => {
@@ -861,6 +963,168 @@ function definePythonGenerators(){
   };
   fb['sk_report'] = (b, gen) =>
     `from sklearn.metrics import classification_report\nprint(classification_report(${b.getFieldValue("TRUE_Y")}, ${b.getFieldValue("PRED_Y")}))\n`;
+
+  // ── 視覺化巨集生成器 ───────────────────────────────────────────────
+  fb['vis_bar_chart'] = (b, gen) => {
+    const arr = gen.valueToCode(b, "ARR", gen.ORDER_NONE) || "[]";
+    return [
+      "def _macro_bar(arr):",
+      "    import js, numpy as np",
+      "    c = js.document.getElementById('drawCanvas'); ctx = c.getContext('2d')",
+      "    ctx.fillStyle='#08090d'; ctx.fillRect(0,0,c.width,c.height)",
+      "    arr = np.array(arr)",
+      "    if len(arr)==0: return",
+      "    w, gap = min(40, (c.width-40)//len(arr)), 6",
+      "    bot, scale = c.height - 50, (c.height-80)/(np.max(arr) if np.max(arr)>0 else 1)",
+      "    avg = np.mean(arr)",
+      "    for i, v in enumerate(arr):",
+      "        bh = v * scale",
+      "        x = i * (w + gap) + 20",
+      "        ctx.fillStyle = '#38bdf8' if v >= avg else '#f87171'",
+      "        ctx.fillRect(x, bot-bh, w, bh)",
+      "        ctx.fillStyle='#fff'; ctx.font='11px sans-serif'; ctx.fillText(str(round(v,1)), x+2, bot+15)",
+      "    ctx.strokeStyle='#fbbf24'; ctx.beginPath(); ctx.moveTo(10, bot-avg*scale); ctx.lineTo(c.width-10, bot-avg*scale); ctx.stroke()",
+      "    print('📊 長條圖繪製完成！')",
+      `_macro_bar(${arr})\n`
+    ].join('\n');
+  };
+
+  fb['vis_heatmap'] = (b, gen) => {
+    const mat = gen.valueToCode(b, "MAT", gen.ORDER_NONE) || "[[]]";
+    return [
+      "def _macro_heatmap(mat):",
+      "    import js, numpy as np",
+      "    c = js.document.getElementById('drawCanvas'); ctx = c.getContext('2d')",
+      "    ctx.fillStyle='#08090d'; ctx.fillRect(0,0,c.width,c.height)",
+      "    mat = np.array(mat)",
+      "    if mat.ndim != 2: print('⚠️ 熱力圖需放入二維陣列'); return",
+      "    rows, cols = mat.shape",
+      "    cell = min((c.height-40)//rows, (c.width-40)//cols)",
+      "    mn, mx = np.min(mat), np.max(mat)",
+      "    norm = (mat - mn) / (mx - mn) if mx > mn else np.zeros_like(mat)",
+      "    for r in range(rows):",
+      "        for c_idx in range(cols):",
+      "            v = norm[r, c_idx]",
+      "            ctx.fillStyle = f'rgb({int(14+42*v)},{int(20+169*v)},{int(30+218*v)})'",
+      "            x, y = 20 + c_idx*cell, 20 + r*cell",
+      "            ctx.fillRect(x, y, cell-2, cell-2)",
+      "            ctx.fillStyle = '#fff' if v>0.4 else '#889'",
+      "            ctx.font='12px sans-serif'; ctx.fillText(str(round(mat[r,c_idx],1)), x+5, y+cell//2+5)",
+      "    print('🌡️ 熱力圖繪製完成！')",
+      `_macro_heatmap(${mat})\n`
+    ].join('\n');
+  };
+
+  fb['vis_scatter'] = (b, gen) => {
+    const xCode = gen.valueToCode(b, "X", gen.ORDER_NONE) || "[]";
+    const yCode = gen.valueToCode(b, "Y", gen.ORDER_NONE) || "[]";
+    return [
+      "def _macro_scatter(X, y):",
+      "    import js, numpy as np",
+      "    c = js.document.getElementById('drawCanvas'); ctx = c.getContext('2d')",
+      "    ctx.fillStyle='#08090d'; ctx.fillRect(0,0,c.width,c.height)",
+      "    X, y = np.array(X), np.array(y)",
+      "    if len(X)==0 or len(y)==0: return",
+      "    colors = ['#f87171', '#34d399', '#38bdf8', '#a78bfa', '#fbbf24']",
+      "    min_x, max_x = np.min(X[:,0]), np.max(X[:,0])",
+      "    min_y, max_y = np.min(X[:,1]), np.max(X[:,1])",
+      "    for i in range(len(X)):",
+      "        px = int(20 + (X[i,0]-min_x)/(max_x-min_x)*(c.width-40)) if max_x>min_x else c.width//2",
+      "        py = int(c.height-20 - (X[i,1]-min_y)/(max_y-min_y)*(c.height-40)) if max_y>min_y else c.height//2",
+      "        ctx.fillStyle = colors[y[i] % len(colors)]",
+      "        ctx.beginPath(); ctx.arc(px, py, 5, 0, 6.28); ctx.fill()",
+      "    print('✨ 散點圖繪製完成！')",
+      `_macro_scatter(${xCode}, ${yCode})\n`
+    ].join('\n');
+  };
+
+  fb['vis_histogram'] = (b, gen) => {
+    const arr = gen.valueToCode(b, "ARR", gen.ORDER_NONE) || "[]";
+    return [
+      "def _macro_hist(arr):",
+      "    import js, numpy as np",
+      "    c = js.document.getElementById('drawCanvas'); ctx = c.getContext('2d')",
+      "    ctx.fillStyle='#08090d'; ctx.fillRect(0,0,c.width,c.height)",
+      "    arr = np.array(arr)",
+      "    if len(arr)==0: return",
+      "    hist, bins = np.histogram(arr, bins=15)",
+      "    if hist.max() == 0: return",
+      "    w = (c.width-40) // len(hist); gap = 2; bot = c.height - 40",
+      "    scale = (c.height - 80) / hist.max()",
+      "    for i, cnt in enumerate(hist):",
+      "        bh = cnt * scale",
+      "        x = 20 + i * w",
+      "        ctx.fillStyle = '#a78bfa'",
+      "        ctx.fillRect(x, bot-bh, w-gap, bh)",
+      "        if cnt > 0:",
+      "            ctx.fillStyle='#fff'; ctx.font='10px sans-serif'",
+      "            ctx.fillText(str(cnt), x+(w-gap)//2-4, bot-bh-5)",
+      "    ctx.fillStyle='#5d7a87'; ctx.font='11px sans-serif'",
+      "    ctx.fillText(f'Min: {bins[0]:.1f}', 20, bot+18)",
+      "    ctx.fillText(f'Max: {bins[-1]:.1f}', c.width-60, bot+18)",
+      "    print('📊 直方圖繪製完成！')",
+      `_macro_hist(${arr})\n`
+    ].join('\n');
+  };
+
+  fb['vis_regression'] = (b, gen) => {
+    const yt = gen.valueToCode(b, "Y_TRUE", gen.ORDER_NONE) || "[]";
+    const yp = gen.valueToCode(b, "Y_PRED", gen.ORDER_NONE) || "[]";
+    return [
+      "def _macro_regression(y_true, y_pred):",
+      "    import js, numpy as np",
+      "    c = js.document.getElementById('drawCanvas'); ctx = c.getContext('2d')",
+      "    ctx.fillStyle='#08090d'; ctx.fillRect(0,0,c.width,c.height)",
+      "    yt, yp = np.array(y_true), np.array(y_pred)",
+      "    if len(yt)==0 or len(yp)==0: return",
+      "    limit = min(200, len(yt))",
+      "    yt, yp = yt[:limit], yp[:limit]",
+      "    v_max = max(np.max(yt), np.max(yp))",
+      "    v_min = min(np.min(yt), np.min(yp))",
+      "    rng = v_max - v_min if v_max > v_min else 1",
+      "    pad, sz = 40, min(c.width, c.height) - 80",
+      "    ctx.strokeStyle='#34d399'; ctx.setLineDash([4,4]); ctx.beginPath()",
+      "    ctx.moveTo(pad, pad+sz); ctx.lineTo(pad+sz, pad); ctx.stroke(); ctx.setLineDash([])",
+      "    errs = np.abs(yt - yp)",
+      "    max_err = np.max(errs) if np.max(errs)>0 else 1",
+      "    for i in range(limit):",
+      "        px = pad + (yt[i]-v_min)/rng * sz",
+      "        py = pad + sz - (yp[i]-v_min)/rng * sz",
+      "        t = errs[i] / max_err",
+      "        ctx.fillStyle = f'rgba({int(52+t*200)}, {int(211*(1-t))}, 90, 0.75)'",
+      "        ctx.beginPath(); ctx.arc(px, py, 4, 0, 6.28); ctx.fill()",
+      "    ctx.fillStyle='#5d7a87'; ctx.font='12px sans-serif'",
+      "    ctx.fillText('真實值 →', pad+sz//2-20, pad+sz+25)",
+      "    ctx.fillText('↑ 預測值', 5, pad+sz//2)",
+      "    print('🎯 迴歸評估圖繪製完成！')",
+      `_macro_regression(${yt}, ${yp})\n`
+    ].join('\n');
+  };
+
+  fb['vis_line_chart'] = (b, gen) => {
+    const arr = gen.valueToCode(b, "ARR", gen.ORDER_NONE) || "[]";
+    return [
+      "def _macro_line_chart(arr):",
+      "    import js, numpy as np",
+      "    c = js.document.getElementById('drawCanvas'); ctx = c.getContext('2d')",
+      "    ctx.fillStyle='#0f172a'; ctx.fillRect(0,0,c.width,c.height)",
+      "    if not isinstance(arr, list) and not type(arr).__name__ == 'ndarray':",
+      "        arr = list(arr) if hasattr(arr, '__iter__') else [arr]",
+      "    if len(arr) < 2: return",
+      "    mx, mn = max(arr), min(arr)",
+      "    rng = mx - mn if mx > mn else 1",
+      "    ctx.strokeStyle='#38bdf8'; ctx.lineWidth=3; ctx.lineJoin='round'; ctx.beginPath()",
+      "    for i, v in enumerate(arr):",
+      "        x = 10 + i * ((c.width-20) / (len(arr)-1))",
+      "        y = c.height - 30 - ((v - mn)/rng) * (c.height - 70)",
+      "        if i==0: ctx.moveTo(x, y)",
+      "        else: ctx.lineTo(x, y)",
+      "    ctx.stroke()",
+      "    ctx.fillStyle='#fff'; ctx.font='bold 14px sans-serif'",
+      "    ctx.fillText(f'最新值: {arr[-1]:.1f}', 15, 25)",
+      `_macro_line_chart(${arr})\n`
+    ].join('\n');
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -920,6 +1184,14 @@ function buildToolboxXml(){
     <block type="sk_predict"></block>
     <block type="sk_score"></block>
     <block type="sk_report"></block>
+  </category>
+  <category name="${t.catVis}" colour="#e84393">
+    <block type="vis_bar_chart"></block>
+    <block type="vis_heatmap"></block>
+    <block type="vis_scatter"></block>
+    <block type="vis_histogram"></block>
+    <block type="vis_regression"></block>
+    <block type="vis_line_chart"></block>
   </category>
   <sep></sep>
   <category name="${t.catBridge}" colour="#f39c12">
@@ -1427,7 +1699,12 @@ const START_XML=`<xml>
   </xml>`;
 
 Blockly.Xml.domToWorkspace(Blockly.utils.xml.textToDom(START_XML),workspace);
-workspace.addChangeListener(()=>{ syncBlocksToCode(); });
+workspace.addChangeListener((e)=>{
+  // 只在積木實際變更時 sync：create/delete/change/move（過濾 drag/viewport 等 UI 事件）
+  const SYNC_ON = new Set(['create','delete','change','move','var_create','var_delete','var_rename']);
+  if(!SYNC_ON.has(e.type)) return;
+  syncBlocksToCode();
+});
 
 // 手動編輯中欄時標記，停止覆蓋
 document.getElementById('codeEditor').addEventListener('input', ()=>{
@@ -1494,7 +1771,24 @@ let isCodeManuallyEdited = false;
 
 function syncBlocksToCode(){
   if(!isCodeManuallyEdited){
-    document.getElementById('codeEditor').value = Blockly.Python.workspaceToCode(workspace);
+    try {
+      // 正常路徑
+      document.getElementById('codeEditor').value = Blockly.Python.workspaceToCode(workspace);
+    } catch(e) {
+      // workspaceToCode 失敗時（例如某積木狀態異常），改為逐塊生成
+      try {
+        Blockly.Python.init(workspace);
+        let code = '';
+        workspace.getTopBlocks(true).forEach(block => {
+          try {
+            let line = Blockly.Python.blockToCode(block);
+            if (Array.isArray(line)) line = line[0];
+            if (line) code += line;
+          } catch(e2) { console.error(e2); }
+        });
+        document.getElementById('codeEditor').value = code;
+      } catch(e3) { console.error(e3); }
+    }
   }
 }
 
@@ -1770,6 +2064,97 @@ function clearOutput(){document.getElementById('outputBox').innerHTML='';documen
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
 // ── 雙分隔線 ──────────────────────────────────────
+// ── CODE PANE POPOUT ─────────────────────────────────────────────────
+(function(){
+  const codePanel = document.getElementById('codePane');
+  const codePH    = document.getElementById('codePanePlaceholder');
+  const resizerA  = document.getElementById('resizerA');
+  const bPane     = document.getElementById('blocklyPane');
+  const cpBar     = document.getElementById('codePaneBar');
+  let isPopped=false, popDrag=false, popResizeDir=null;
+  let popX0,popY0,popL0,popT0,popW0,popH0;
+
+  window.toggleCodePopout = function(){
+    if(!isPopped){
+      const rect = codePanel.getBoundingClientRect();
+      const w = Math.max(360, rect.width), h = Math.max(300, rect.height);
+      // 把 codePane 移到 body（脫離 flex 佈局）
+      document.body.appendChild(codePanel);
+      codePanel.classList.add('popped-out');
+      codePanel.style.left   = rect.left+'px';
+      codePanel.style.top    = rect.top+'px';
+      codePanel.style.width  = w+'px';
+      codePanel.style.height = h+'px';
+      // placeholder 寬度設為 0，讓 blocklyPane 真正填滿 codePane 空出的空間
+      codePH.style.width = '0';
+      codePH.style.minWidth = '0';
+      codePH.style.overflow = 'hidden';
+      resizerA.style.display='none';
+      bPane.style.flex='1'; bPane.style.width='';
+      isPopped=true;
+      // 給 DOM reflow 時間，再通知 Blockly 重算尺寸
+      setTimeout(()=>Blockly.svgResize(workspace), 100);
+    } else {
+      codePanel.classList.remove('popped-out');
+      codePanel.style.cssText='';
+      // codePane 插回 resizerA 之後（原本位置）
+      resizerA.insertAdjacentElement('afterend', codePanel);
+      codePH.style.width=''; codePH.style.minWidth=''; codePH.style.overflow='';
+      resizerA.style.display='';
+      bPane.style.flex=''; bPane.style.width='';
+      isPopped=false;
+      setTimeout(()=>Blockly.svgResize(workspace), 100);
+    }
+  };
+
+  // 拖曳標題列
+  cpBar.addEventListener('mousedown',e=>{
+    if(!isPopped||e.target.closest('.popout-btn'))return;
+    popDrag=true;
+    popX0=e.clientX; popY0=e.clientY;
+    popL0=parseInt(codePanel.style.left)||0;
+    popT0=parseInt(codePanel.style.top)||0;
+    document.body.style.userSelect='none';
+    document.body.style.cursor='move';
+    e.preventDefault();
+  });
+
+  // 8方向縮放
+  document.querySelectorAll('#codePane .pr').forEach(h=>{
+    h.addEventListener('mousedown',e=>{
+      if(!isPopped)return;
+      e.stopPropagation(); e.preventDefault();
+      popResizeDir=h.dataset.dir;
+      popX0=e.clientX; popY0=e.clientY;
+      popW0=codePanel.offsetWidth; popH0=codePanel.offsetHeight;
+      popL0=parseInt(codePanel.style.left)||0;
+      popT0=parseInt(codePanel.style.top)||0;
+      document.body.style.userSelect='none';
+      document.body.style.cursor=getComputedStyle(h).cursor;
+    });
+  });
+
+  document.addEventListener('mousemove',e=>{
+    if(popDrag){
+      codePanel.style.left=Math.max(0,popL0+e.clientX-popX0)+'px';
+      codePanel.style.top =Math.max(0,popT0+e.clientY-popY0)+'px';
+    }
+    if(popResizeDir){
+      const dx=e.clientX-popX0, dy=e.clientY-popY0, d=popResizeDir;
+      const MW=280,MH=180;
+      if(d.includes('e')) codePanel.style.width =Math.max(MW,popW0+dx)+'px';
+      if(d.includes('w')){const nw=Math.max(MW,popW0-dx);codePanel.style.width=nw+'px';codePanel.style.left=(popL0+popW0-nw)+'px';}
+      if(d.includes('s')) codePanel.style.height=Math.max(MH,popH0+dy)+'px';
+      if(d.includes('n')){const nh=Math.max(MH,popH0-dy);codePanel.style.height=nh+'px';codePanel.style.top=(popT0+popH0-nh)+'px';}
+    }
+  });
+  document.addEventListener('mouseup',()=>{
+    if(popDrag||popResizeDir){document.body.style.userSelect='';document.body.style.cursor='';}
+    popDrag=false; popResizeDir=null;
+  });
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&isPopped)toggleCodePopout();});
+})();
+
 // Resizer A：Blockly ↔ Python
 (function(){
   const rA = document.getElementById('resizerA');
@@ -1929,3 +2314,5 @@ startBridgePoll();
 </script>
 </body>
 </html>
+
+
